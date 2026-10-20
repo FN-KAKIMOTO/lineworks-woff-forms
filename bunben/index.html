@@ -75,6 +75,10 @@
   .seg.invalid span { border-color: var(--danger); }
   /* 牛群移動の「移動の向き」は移動先の牛群と見分けがつくよう青にする */
   .m-groups input:checked + span { background: var(--dir); border-color: var(--dir); }
+  .cow-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .cow-row .m-tag { flex: 1; min-width: 0; }
+  .cow-row .m-delcow { flex: 0 0 56px; padding: 0; }
+  .m-cow .chips { margin: -2px 0 8px; }
   .seg.invalid { background: none; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .chips:empty { display: none; }
@@ -204,10 +208,10 @@
       </section>
     </div>
 
-    <!-- 牛群移動（牛ごとに移動先を選ぶ。中標津と希望の交換は2頭まとめて送れる） -->
+    <!-- 牛群移動（移動先ごとのカードに牛を並べる。交換は移動先のカードを2枚にして1回で送れる） -->
     <div id="idouFields" hidden>
-      <div id="moves"></div>
-      <button type="button" id="addMove" class="ghost">＋ もう1頭追加（交換など）</button>
+      <div id="moveGroups"></div>
+      <button type="button" id="addGroup" class="ghost">＋ 別の移動先を追加（交換など）</button>
       <p class="hint" style="margin:-4px 0 12px">1回に4頭まで。5頭以上の移動は PC で Farmnote に入れてください</p>
       <section class="card">
         <label class="field"><span>メモ</span><textarea id="iMemo" rows="2" placeholder="例: 足の様子を見る"></textarea></label>
@@ -266,7 +270,7 @@
     <label class="field"><span>自家耳標番号</span><input class="c-tag" autocomplete="off" placeholder="個体識別番号から自動で入ります"></label>
     <div class="field"><span class="label c-req">性別</span><div class="seg c-sex"></div></div>
     <label class="field"><span class="c-req">品種</span><select class="c-breed"></select></label>
-    <div class="field"><span class="label c-req">タイプ</span><div class="seg c-type"></div></div>
+    <div class="field"><span class="label c-req">タイプ</span><div class="seg c-type"></div><p class="hint c-type-hint"></p></div>
     <div class="row2">
       <div class="field"><label><span class="label c-req">出生時体重（kg）</span>
         <input class="c-weight" type="number" inputmode="decimal" min="1" max="99" step="0.1"></label>
@@ -282,22 +286,27 @@
   </section>
 </template>
 
-<template id="moveTpl">
-  <section class="card move">
-    <div class="calf-head"><h2>牛<span class="no"></span></h2><button type="button" class="link remove">削除</button></div>
-    <label class="field"><span class="req">耳標</span>
-      <input class="m-tag" autocomplete="off" placeholder="例: ネ146（数字だけでも検索）">
-    </label>
-    <div class="chips m-hits"></div>
-    <details class="m-id-box">
-      <summary>個体識別番号で入れる</summary>
-      <label class="field"><span>個体識別番号（10桁）</span>
-        <input class="m-id" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="例: 1234567890">
-      </label>
-    </details>
+<template id="moveGroupTpl">
+  <section class="card mgroup">
+    <div class="calf-head"><h2>移動先<span class="no"></span></h2><button type="button" class="link remove">削除</button></div>
     <div class="field m-groups-box"><span class="label req">移動の向き</span><div class="seg m-groups"></div></div>
     <div class="field"><span class="label req">移動先の牛群</span><div class="seg m-herds"></div></div>
+    <div class="field"><span class="label req">移動する牛（耳標か、10桁の個体識別番号）</span>
+      <div class="m-cows"></div>
+      <button type="button" class="small m-addcow" style="width:100%">＋ 同じ移動先にもう1頭</button>
+    </div>
   </section>
+</template>
+
+<template id="moveCowTpl">
+  <div class="m-cow">
+    <div class="cow-row">
+      <input class="m-tag" autocomplete="off" placeholder="例: ネ146">
+      <input class="m-id" type="hidden">
+      <button type="button" class="small m-delcow" aria-label="この牛を外す">✕</button>
+    </div>
+    <div class="chips m-hits"></div>
+  </div>
 </template>
 
 <script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>

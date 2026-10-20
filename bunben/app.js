@@ -12,10 +12,10 @@ const MOCK = PARAMS.has('mock');
 const TRIAL = PARAMS.has('trial');
 // 報告の種類。トークルームの下のボタン（Bot の固定メニュー）から ?type=… で開く
 const ACTIVITY_INFO = {
-  bunben: { title: '分娩の報告', cow: '母牛', date: '分娩日', button: '＋ 分娩を報告する', color: '#2f7d4f' },
-  shippei: { title: '疾病の報告', cow: '牛', date: '発生日', button: '＋ 疾病を報告する', color: '#b45309' },
-  haiyou: { title: '死亡・廃用の報告', cow: '牛', date: '死亡・廃用の日', button: '＋ 死亡・廃用を報告する', color: '#4b5563' },
-  idou: { title: '牛群移動の報告', cow: '牛', date: '移動日', button: '＋ 牛群移動を報告する', color: '#1d5fa8' },
+  bunben: { title: '分娩の報告', cow: '母牛', date: '分娩日', color: '#2f7d4f' },
+  shippei: { title: '疾病の報告', cow: '牛', date: '発生日', color: '#b45309' },
+  haiyou: { title: '死亡・廃用の報告', cow: '牛', date: '死亡・廃用の日', color: '#4b5563' },
+  idou: { title: '牛群移動の報告', cow: '牛', date: '移動日', color: '#1d5fa8' },
 };
 const MAX_MOVES = 4; // 牛群移動の1回の報告で送れる頭数（GAS と同じ。5頭以上は PC で入れる）
 const HERDS_FIRST = 8; // 移動先の牛群は「牛群」タブの上から8つを出し、残りは「ほかの牛群」で開く
@@ -36,6 +36,8 @@ const state = {
   diseases: [],
   choices: null,
   dairyBreeds: [],
+  wagyuBreeds: [],
+  wagyuFemaleTypes: [],
   canPost: false,
   trialKey: '',
   view: 'form',
@@ -77,7 +79,9 @@ async function start() {
   state.farms = res.farms;
   state.diseases = res.diseases || [];
   state.choices = res.choices;
-  state.dairyBreeds = res.dairyBreeds;
+  state.dairyBreeds = res.dairyBreeds || [];
+  state.wagyuBreeds = res.wagyuBreeds || [];
+  state.wagyuFemaleTypes = res.wagyuFemaleTypes || [];
   if (!state.farms.length) throw new Error('設定シート「牧場」に牧場がありません');
   setupForm();
   $('#loading').hidden = true;
@@ -226,8 +230,8 @@ function setupHaiyou() {
 }
 
 function setupIdou() {
-  $('#addMove').addEventListener('click', () => addMove());
-  addMove();
+  $('#addGroup').addEventListener('click', () => addGroup());
+  addGroup();
 }
 
 function currentFarm() {
@@ -251,7 +255,7 @@ function applyFarm() {
     else if (workers.includes(last)) $('#worker').value = last;
   }
   $$('#calves .calf').forEach(renderPrefixes);
-  $$('#moves .move').forEach(renderGroups);
+  $$('#moveGroups .mgroup').forEach(renderGroups);
   showDamHits();
 }
 
@@ -323,40 +327,72 @@ function fillTagFromId(idEl, tagEl) {
 
 // ---------- 牛群移動 ----------
 
-function addMove() {
-  const list = $('#moves');
-  if (list.children.length >= MAX_MOVES) return;
-  const node = $('#moveTpl').content.firstElementChild.cloneNode(true);
+/**
+ * 移動先のカード。向きと移動先の牛群を1回選び、同じ移動先へ行く牛を何頭でも（合計4頭まで）並べる。
+ * 交換のように移動先が違うときは「別の移動先を追加」でカードを増やす（反対の向きが開く）
+ */
+function addGroup() {
+  if (moveCowCount() >= MAX_MOVES) return;
+  const list = $('#moveGroups');
+  const node = $('#moveGroupTpl').content.firstElementChild.cloneNode(true);
   node.dataset.key = `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
   node.dataset.herd = '';
-  // 2頭目以降は前の牛と反対の向き（DP → 希望 ⇔ 希望 → DP）を開いておく（交換のとき選びやすいように）
   const groups = herdGroups();
   const prev = list.lastElementChild;
   const prevGroup = prev ? prev.dataset.group : '';
   node.dataset.group = prevGroup === groups[0] && groups[1] ? groups[1] : groups[0] || '';
-
-  const tagEl = $('.m-tag', node);
-  const idEl = $('.m-id', node);
-  tagEl.addEventListener('input', () => cowHits(tagEl, idEl, $('.m-hits', node)));
-  fixTagOnBlur(tagEl);
-  idEl.addEventListener('input', () => fillTagFromId(idEl, tagEl));
   $('.remove', node).addEventListener('click', () => {
     node.remove();
-    renumberMoves();
+    renumberGroups();
     state.pendingId = '';
+  });
+  $('.m-addcow', node).addEventListener('click', () => {
+    const tag = addCow(node);
+    if (tag) tag.focus();
   });
   list.append(node);
   renderGroups(node);
-  renumberMoves();
+  addCow(node);
+  renumberGroups();
 }
 
-function renumberMoves() {
-  const nodes = $$('#moves .move');
-  nodes.forEach((node, i) => {
-    $('.no', node).textContent = nodes.length > 1 ? String(i + 1) : '';
-    $('.remove', node).hidden = nodes.length === 1;
+/** 移動する牛の1行。耳標を入れる（10桁の数字なら個体識別番号として扱う） */
+function addCow(group) {
+  if (moveCowCount() >= MAX_MOVES) return null;
+  const row = $('#moveCowTpl').content.firstElementChild.cloneNode(true);
+  const tagEl = $('.m-tag', row);
+  const idEl = $('.m-id', row); // 「母牛」タブの候補を選んだときの個体識別番号（見えない）
+  tagEl.addEventListener('input', () => {
+    idEl.value = '';
+    cowHits(tagEl, idEl, $('.m-hits', row));
   });
-  $('#addMove').hidden = nodes.length >= MAX_MOVES;
+  fixTagOnBlur(tagEl);
+  $('.m-delcow', row).addEventListener('click', () => {
+    row.remove();
+    renumberGroups();
+    state.pendingId = '';
+  });
+  $('.m-cows', group).append(row);
+  renumberGroups();
+  return tagEl;
+}
+
+function moveCowCount() {
+  return $$('#moveGroups .m-cow').length;
+}
+
+/** 番号・削除ボタン・追加ボタンの出し分け（合計4頭で追加ボタンを隠す） */
+function renumberGroups() {
+  const groups = $$('#moveGroups .mgroup');
+  const full = moveCowCount() >= MAX_MOVES;
+  groups.forEach((g, i) => {
+    $('.no', g).textContent = groups.length > 1 ? String(i + 1) : '';
+    $('.remove', g).hidden = groups.length === 1;
+    const rows = $$('.m-cow', g);
+    rows.forEach((row) => { $('.m-delcow', row).hidden = rows.length === 1; });
+    $('.m-addcow', g).hidden = full;
+  });
+  $('#addGroup').hidden = full;
 }
 
 function currentHerds() {
@@ -414,8 +450,8 @@ function addCalf() {
   if (list.children.length >= 3) return;
   const node = $('#calfTpl').content.firstElementChild.cloneNode(true);
   const key = `c${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+  node.dataset.key = key;
   segment($('.c-sex', node), `${key}-sex`, state.choices.sex, '');
-  segment($('.c-type', node), `${key}-type`, state.choices.type, '');
   fillSelect($('.c-breed', node), state.choices.breed, '選択してください');
   fillSelect($('.c-color', node), state.choices.color, '未選択');
 
@@ -442,9 +478,9 @@ function addCalf() {
       }
     });
   });
-  $('.c-breed', node).addEventListener('change', () => autoType(node));
-  $$('.c-sex input', node).forEach((el) => el.addEventListener('change', () => autoType(node)));
-  $$('.c-type input', node).forEach((el) => el.addEventListener('change', () => { node.dataset.typeManual = '1'; }));
+  $('.c-breed', node).addEventListener('change', () => renderType(node));
+  $$('.c-sex input', node).forEach((el) => el.addEventListener('change', () => renderType(node)));
+  renderType(node);
   $('.remove', node).addEventListener('click', () => {
     node.remove();
     renumberCalves();
@@ -497,14 +533,33 @@ function autoTag(node) {
   $('.c-tag', node).value = rule ? `${rule.letter}${id.slice(5, 9)}` : '';
 }
 
-/** 品種からタイプを決める（ホルスタイン・ジャージー → 乳用牛、それ以外 → 肉用牛）。手で選んだら触らない */
-function autoType(node) {
-  if (node.dataset.typeManual) return;
-  const breed = $('.c-breed', node).value;
-  if (!breed) return;
-  const type = state.dairyBreeds.includes(breed) ? '乳用牛' : '肉用牛';
-  const el = $$('.c-type input', node).find((x) => x.value === type);
-  if (el) el.checked = true;
+/**
+ * 子牛のタイプの決まり（GAS の calfTypeRule_ と同じ）。乳用種のメス → 乳用牛、和牛のメス → 繁殖雌牛か肉用牛を選ぶ、
+ * それ以外（F1・ホルスタインのオス・和牛のオス）→ 肉用牛。品種か性別が無ければ null
+ */
+function calfTypeRule(breed, sex) {
+  if (!breed || !sex) return null;
+  if (sex === 'メス' && state.wagyuBreeds.includes(breed)) return { choices: state.wagyuFemaleTypes };
+  if (sex === 'メス' && state.dairyBreeds.includes(breed)) return { fixed: '乳用牛' };
+  return { fixed: '肉用牛' };
+}
+
+/** タイプの欄: 決まるものは自動で入れ、和牛のメスだけ2つから選んでもらう */
+function renderType(node) {
+  const rule = calfTypeRule($('.c-breed', node).value, value(null, $('.c-sex', node)));
+  const box = $('.c-type', node);
+  const current = value(null, box);
+  const hint = $('.c-type-hint', node);
+  if (!rule) {
+    segment(box, `${node.dataset.key}-type`, [], '');
+    hint.textContent = '品種と性別を選ぶと決まります';
+  } else if (rule.fixed) {
+    segment(box, `${node.dataset.key}-type`, [rule.fixed], rule.fixed);
+    hint.textContent = '品種と性別から自動で決まります';
+  } else {
+    segment(box, `${node.dataset.key}-type`, rule.choices, rule.choices.includes(current) ? current : '');
+    hint.textContent = '和牛のメスは選んでください';
+  }
 }
 
 // ---------- 確認・送信 ----------
@@ -539,12 +594,17 @@ function collect() {
       damTag: '',
       damId: '',
       memo: $('#iMemo').value.trim(),
-      moves: $$('#moves .move').map((node) => ({
-        tag: fixTag($('.m-tag', node).value),
-        id: $('.m-id', node).value.trim(),
-        herd: node.dataset.herd,
-        dir: node.dataset.herd ? node.dataset.group : '', // トークに出す移動の向き（シートには保存しない）
-      })),
+      // 移動先のカードごとの牛を1頭ずつに並べる。空の行は飛ばす。10桁の数字は個体識別番号として送る
+      moves: $$('#moveGroups .mgroup').flatMap((g) => $$('.m-cow', g).map((row) => {
+        const v = fixTag($('.m-tag', row).value);
+        const isId = /^\d{10}$/.test(v);
+        return {
+          tag: isId ? '' : v,
+          id: isId ? v : $('.m-id', row).value,
+          herd: g.dataset.herd,
+          dir: g.dataset.herd ? g.dataset.group : '', // トークに出す移動の向き（シートには保存しない）
+        };
+      }).filter((mv) => mv.tag || mv.id)),
     };
   }
   return {
@@ -621,23 +681,26 @@ function hasCalfInfo(c) {
   return Boolean(c.id || c.tag || c.name || c.sex || c.breed || c.weight || c.memo);
 }
 
-/** 牛群移動: 牛ごとに耳標か個体識別番号と移動先。同じ牛を2回入れない */
+/** 牛群移動: 移動先のカードごとに牛が1頭以上と移動先の牛群。同じ牛を2回入れない（画面の行を直接見る） */
 function validateMoves(r, bad) {
-  const nodes = $$('#moves .move');
+  const groups = $$('#moveGroups .mgroup');
   const seen = new Set();
-  r.moves.forEach((mv, i) => {
-    const node = nodes[i];
-    const no = r.moves.length > 1 ? `牛${i + 1}` : '牛';
-    if (!mv.tag && !mv.id) bad($('.m-tag', node), `${no}の耳標を入れてください`);
-    if (mv.id && mv.id.length !== 10) {
-      $('.m-id-box', node).open = true;
-      bad($('.m-id', node), `${no}の個体識別番号は10桁です`);
-    }
-    if (!mv.herd) bad($('.m-herds', node), `${no}の移動先の牛群を選んでください`);
-    const key = toDigits(mv.id) || normalize(mv.tag);
-    if (key && seen.has(key)) bad($('.m-tag', node), `${no}は同じ牛が2回入っています`);
-    if (key) seen.add(key);
+  groups.forEach((g, i) => {
+    const p = groups.length > 1 ? `移動先${i + 1}の` : '';
+    const rows = $$('.m-cow', g);
+    const filled = rows.filter((row) => fixTag($('.m-tag', row).value));
+    if (!filled.length) bad($('.m-tag', rows[0]), `${p}牛の耳標を入れてください`);
+    if (!g.dataset.herd) bad($('.m-herds', g), groups.length > 1 ? `移動先${i + 1}の牛群を選んでください` : '移動先の牛群を選んでください');
+    filled.forEach((row) => {
+      const el = $('.m-tag', row);
+      const v = fixTag(el.value);
+      if (/^\d{5,9}$|^\d{11,}$/.test(v)) bad(el, `「${v}」: 個体識別番号なら10桁です`);
+      const key = /^\d{10}$/.test(v) ? v : normalize(v);
+      if (seen.has(key)) bad(el, `「${v}」が2回入っています`);
+      seen.add(key);
+    });
   });
+  if (r.moves.length > MAX_MOVES) bad(null, `1回に送れるのは${MAX_MOVES}頭までです`);
 }
 
 function onNext() {
@@ -757,8 +820,8 @@ function resetForNext() {
     $$('#hKind input').forEach((el) => { el.checked = false; });
   } else {
     $('#iMemo').value = '';
-    $('#moves').textContent = '';
-    addMove();
+    $('#moveGroups').textContent = '';
+    addGroup();
   }
   state.pendingId = '';
   showView('form');
@@ -807,126 +870,120 @@ async function copyText(text) {
   setTimeout(() => { btn.textContent = '文面をコピー'; }, 2000);
 }
 
-/** トークに投稿する文面（スプレッドシートの保存内容とは別。読みやすさ優先） */
-/** 投稿の見出しと「項目：内容」の行。テキストとカードの両方で使う */
+/**
+ * トークに投稿する見出しと「項目：内容」の行（テキストとカードの両方で使う。シートの保存内容とは別）。
+ * トークで読みやすいよう短くする: 日付は今日なら出さない（投稿時刻でわかる）、作業者は投稿した本人と違うとき（代理入力）だけ出す
+ */
 function reportRows(r, time) {
   const oneLine = (s) => s.replace(/\s*\n\s*/g, ' ');
   const [, m, d] = r.date.split('-').map(Number);
-  const when = `${m}月${d}日 ${time || ''}`.trim();
-  const cow = r.damTag && r.damId ? `${r.damTag}（${r.damId}）` : r.damTag || r.damId;
+  const isToday = r.date === today();
+  const day = `${m}月${d}日`;
+  const tail = [];
+  if (r.memo) tail.push(['メモ', oneLine(r.memo)]);
+  if (!isSelf(r.worker)) tail.push(['作業者', r.worker]);
+  const cow = r.damTag || r.damId;
   if (r.activity === 'shippei') {
-    const rows = [
-      ['牛', cow],
-      ['発生日', `${m}月${d}日`],
-      ['疾病名', r.disease],
-      ['体温', r.temp ? `${Number(r.temp).toFixed(1)}℃` : '測っていない'],
-      ['診療', [r.shinryo, r.saishin, r.kousei].filter(Boolean).join('・')],
-    ];
-    if (r.memo) rows.push(['メモ', oneLine(r.memo)]);
-    rows.push(['作業者', r.worker]);
-    return { title: '疾病の報告', rows };
+    const rows = [['牛', cow], ['疾病名', r.disease]];
+    if (r.temp) rows.push(['体温', `${Number(r.temp).toFixed(1)}℃`]);
+    rows.push(['診療', [r.shinryo, r.saishin, r.kousei].filter(Boolean).join('・')]);
+    if (!isToday) rows.push(['発生日', day]);
+    return { title: '疾病の報告', rows: rows.concat(tail) };
   }
   if (r.activity === 'haiyou') {
-    const rows = [['牛', cow], ['日付', `${m}月${d}日`], ['種別', r.kind], ['理由', r.reason]];
-    if (r.memo) rows.push(['メモ', oneLine(r.memo)]);
-    rows.push(['作業者', r.worker]);
-    return { title: `${r.kind}の報告`, rows };
+    const rows = [['牛', cow], ['理由', r.reason]];
+    if (!isToday) rows.push(['日付', day]);
+    return { title: `${r.kind}の報告`, rows: rows.concat(tail) };
   }
-  if (r.activity === 'idou') return idouRows(r, oneLine);
+  if (r.activity === 'idou') return idouRows(r, day, isToday, tail);
+  const how = r.timeKind === 'birth' ? '分娩に立ち会い' : '子牛を発見';
   const rows = [
-    ['母牛', r.damTag && r.damId ? `${r.damTag}（${r.damId}）` : r.damTag || r.damId],
-    ['日時', `${when}（${r.timeKind === 'birth' ? '分娩に立ち会い' : '子牛を発見'}）`],
+    ['母牛', cow],
+    [isToday ? '時刻' : '日付', [isToday ? time : day, how].filter(Boolean).join(' ')],
     ['分類', [r.kind, r.difficulty].filter(Boolean).join('・')],
   ];
   const calves = r.calves.filter((c) => r.kind === '出産' || hasCalfInfo(c));
   calves.forEach((c, i) => {
     const no = calves.length > 1 ? String(i + 1) : '';
+    // 子牛は1行: 「K1547 メス・黒毛和種・57kg」。タイプは選んだときの繁殖雌牛だけ出す（ほかは品種と性別で決まる）
+    const ear = c.tag || (c.id ? fmtCalfId(c.id) : c.noId ? '耳標なし' : '');
     const weight = c.weight ? `${c.weight}kg` : c.noWeight ? '体重未測定' : '';
-    rows.push([`子牛${no}`, [c.sex, c.breed, weight].filter(Boolean).join('・')]);
-    rows.push([`耳標${no}`, c.id ? `${c.tag || c.id.slice(5, 9)}（${fmtCalfId(c.id)}）` : c.tag || (c.noId ? '未装着' : '未記入')]);
+    const attrs = [c.sex, c.breed, c.type === '繁殖雌牛' ? c.type : '', weight].filter(Boolean).join('・');
+    rows.push([`子牛${no}`, [ear, attrs].filter(Boolean).join(' ')]);
     if (c.memo) rows.push([`出生メモ${no}`, oneLine(c.memo)]);
   });
-  if (r.memo) rows.push(['メモ', oneLine(r.memo)]);
-  rows.push(['作業者', r.worker]);
   const title = r.kind === '出産' ? '分娩の報告' : `${r.kind}の報告`;
-  return { title, rows };
+  return { title, rows: rows.concat(tail) };
+}
+
+/** 作業者が投稿する本人か（試行モードは投稿者がいないので常に違うとみなす） */
+function isSelf(worker) {
+  if (TRIAL) return false;
+  const me = normalize((state.user && state.user.name) || (state.profile && state.profile.displayName) || '');
+  if (!me) return false;
+  if (normalize(worker) === me) return true;
+  const farm = currentFarm();
+  return Boolean(farm && farm.workers.some((w) => w.name === worker && normalize(w.lwName) === me));
 }
 
 /**
- * 牛群移動のカード。移動の向き（DP → 希望 など）ごとにまとめ、牛ごとに「耳標 → 移動先」を1行で出す。
- * 交換（向きが2つ）のときは見出しを「交換」にする。移動日は今日なら出さない（投稿時刻でわかる）
+ * 牛群移動のカード。同じ向き・同じ移動先の牛は1行にまとめる（「ネ145・ネ146 → VMS_VIC」）。
+ * 向きが1つなら見出しに出し（「牛群移動 希望 → DP」）、2つ（交換）なら行の頭に出す
  */
-function idouRows(r, oneLine) {
-  const [, m, d] = r.date.split('-').map(Number);
-  const dirs = [...new Set(r.moves.map((mv) => mv.dir))];
-  const rows = [];
-  let n = 0;
-  dirs.forEach((dir) => {
-    if (dir) rows.push(['向き', dir]);
-    r.moves.filter((mv) => mv.dir === dir).forEach((mv) => {
-      n += 1;
-      const cow = mv.tag && mv.id ? `${mv.tag}（${mv.id}）` : mv.tag || mv.id;
-      rows.push([r.moves.length > 1 ? `牛${n}` : '牛', `${cow} → ${mv.herd}`]);
-    });
+function idouRows(r, day, isToday, tail) {
+  const groups = [];
+  r.moves.forEach((mv) => {
+    let g = groups.find((x) => x.dir === mv.dir && x.herd === mv.herd);
+    if (!g) groups.push((g = { dir: mv.dir, herd: mv.herd, cows: [] }));
+    g.cows.push(mv.tag || mv.id);
   });
-  if (r.date !== today()) rows.push(['移動日', `${m}月${d}日`]);
-  if (r.memo) rows.push(['メモ', oneLine(r.memo)]);
-  rows.push(['作業者', r.worker]);
-  const head = dirs.length > 1 ? '牛群移動（交換）' : '牛群移動';
-  return { title: r.moves.length > 1 ? `${head} ${r.moves.length}頭` : head, rows };
+  const dirs = [...new Set(groups.map((g) => g.dir))];
+  const rows = groups.map((g) => [
+    dirs.length > 1 ? g.dir.replace(/\s+/g, '') : g.cows.length > 1 ? `${g.cows.length}頭` : '牛',
+    `${g.cows.join('・')} → ${g.herd}`,
+  ]);
+  if (!isToday) rows.push(['移動日', day]);
+  const title = dirs.length > 1 ? '牛群移動（交換）' : ['牛群移動', dirs[0]].filter(Boolean).join(' ');
+  return { title, rows: rows.concat(tail) };
+}
+
+/** 牧場が2つ以上あるときだけ牧場名を出す（今は希望DPだけなので出さない） */
+function farmLabel(r) {
+  return state.farms.length > 1 ? r.farm : '';
 }
 
 /** トークに投稿する文面（カードを送れないときと、コピーして貼るとき用） */
 function buildMessage(r, time) {
   const { title, rows } = reportRows(r, time);
-  return [`【${title}】${r.farm}`, ...rows.map(([label, value]) => `${label}：${value}`)].join('\n');
+  return [`【${title}】${farmLabel(r)}`, ...rows.map(([label, value]) => `${label}：${value}`)].join('\n');
 }
 
-/** トークに投稿するカード（Flexible Template）。下に次の報告を開く大きいボタンを付ける */
+/** トークに投稿するカード（Flexible Template）。次の報告はトークルームの下のボタンから開くので、カードにボタンは付けない */
 function buildFlex(r, time) {
   const { title, rows } = reportRows(r, time);
   const info = ACTIVITY_INFO[r.activity] || INFO;
   const headColor = r.activity === 'bunben' && r.kind !== '出産' ? '#7a5c2e' : info.color;
+  const head = [{ type: 'text', text: title, color: '#ffffff', weight: 'bold', size: 'lg', wrap: true }];
+  if (farmLabel(r)) head.push({ type: 'text', text: farmLabel(r), color: '#ffffff', size: 'sm' });
   return {
     type: 'flex',
     altText: buildMessage(r, time).slice(0, 400),
     contents: {
       type: 'bubble',
-      header: {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: headColor,
-        paddingAll: '14px',
-        contents: [
-          { type: 'text', text: title, color: '#ffffff', weight: 'bold', size: 'xl' },
-          { type: 'text', text: r.farm, color: '#ffffff', size: 'sm' },
-        ],
-      },
+      header: { type: 'box', layout: 'vertical', backgroundColor: headColor, paddingAll: '12px', contents: head },
       body: {
         type: 'box',
         layout: 'vertical',
-        spacing: 'md',
+        spacing: 'sm',
         contents: rows.map(([label, value]) => ({
           type: 'box',
           layout: 'horizontal',
           spacing: 'md',
           contents: [
-            { type: 'text', text: label, size: 'md', color: '#646b62', flex: 2 },
+            { type: 'text', text: label, size: 'md', color: '#646b62', flex: 2, wrap: true },
             { type: 'text', text: value || '－', size: 'md', color: '#1d211c', weight: 'bold', flex: 5, wrap: true },
           ],
         })),
-      },
-      footer: {
-        type: 'box',
-        layout: 'vertical',
-        contents: [{
-          type: 'button',
-          style: 'primary',
-          color: '#2f7d4f',
-          height: 'md',
-          // 次の報告を開く。WOFF URL に条件を付けるときは「/?」の形にする
-          action: { type: 'uri', label: info.button, uri: `https://woff.worksmobile.com/woff/${CONFIG.woffId}/?type=${r.activity}` },
-        }],
       },
     },
   };
