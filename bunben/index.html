@@ -79,6 +79,13 @@
   .cow-row .m-tag { flex: 1; min-width: 0; }
   .cow-row .m-delcow { flex: 0 0 56px; padding: 0; }
   .m-cow .chips { margin: -2px 0 8px; }
+  .cow-row select { flex: 1; min-width: 0; }
+  .drug { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .drug-row { display: grid; grid-template-columns: 1fr 72px 1.4fr; gap: 8px; }
+  .chooser-btn { display: block; width: 100%; margin-bottom: 12px; text-align: left; padding: 18px 16px; }
+  .chooser-btn small { display: block; font-size: 13px; font-weight: 400; opacity: .9; }
+  .step-group { font-size: 13px; color: var(--muted); margin: 10px 0 6px; }
+  .step-group:first-child { margin-top: 0; }
   .seg.invalid { background: none; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .chips:empty { display: none; }
@@ -147,6 +154,12 @@
     <p id="adminResult" class="notice"></p>
   </section>
 
+  <!-- 「その他の報告」ボタンから開いたとき: 報告の種類を選ぶ -->
+  <section id="chooser" hidden>
+    <p class="hint" style="margin:0 0 10px">報告の種類を選んでください</p>
+    <div id="chooserButtons"></div>
+  </section>
+
   <form id="form" novalidate hidden>
     <section class="card" id="farmCard">
       <label class="field"><span class="req">牧場</span><select id="farm"></select></label>
@@ -162,6 +175,14 @@
         <input id="damId" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="例: 1234567890">
       </label>
       <p class="hint">耳標か個体識別番号のどちらか一方でOK</p>
+    </section>
+
+    <!-- 治療・採卵の処置: 同じ処置をした牛を並べる -->
+    <section class="card" id="multiCowCard" hidden>
+      <h2>牛</h2>
+      <span class="label req">耳標か、10桁の個体識別番号</span>
+      <div id="cowList"></div>
+      <button type="button" id="addCowRow" class="small" style="width:100%">＋ もう1頭（同じ処置）</button>
     </section>
 
     <!-- 分娩 -->
@@ -215,6 +236,39 @@
       <p class="hint" style="margin:-4px 0 12px">1回に4頭まで。5頭以上の移動は PC で Farmnote に入れてください</p>
       <section class="card">
         <label class="field"><span>メモ</span><textarea id="iMemo" rows="2" placeholder="例: 足の様子を見る"></textarea></label>
+      </section>
+    </div>
+
+    <!-- 治療（アブレスト以外） -->
+    <div id="chiryouFields" hidden>
+      <section class="card">
+        <h2>治療</h2>
+        <div class="field"><span class="label req">治療区分</span><div id="cKubun" class="seg"></div></div>
+        <label class="field"><span>疾病名</span><select id="cDisease"></select></label>
+        <label class="field" id="cDiseaseOtherField" hidden><span class="req">疾病名（入力）</span>
+          <input id="cDiseaseOther" autocomplete="off" placeholder="例: 足の切り傷"></label>
+      </section>
+      <section class="card">
+        <h2>薬</h2>
+        <div id="drugList"></div>
+        <button type="button" id="addDrug" class="small" style="width:100%">＋ 薬を追加</button>
+      </section>
+      <section class="card">
+        <label class="field"><span>体温（℃）</span>
+          <input id="cTemp" type="number" inputmode="decimal" min="35" max="43" step="0.1" placeholder="測ったときだけ"></label>
+        <div class="field"><span class="label">ステータス</span><div id="cStatus" class="seg"></div></div>
+        <label class="field"><span>メモ</span><textarea id="cMemo" rows="2" placeholder="例: 左前PL+ 肉休薬9/28まで"></textarea></label>
+      </section>
+    </div>
+
+    <!-- 採卵の処置（定時授精。OPU と体内採卵） -->
+    <div id="sairanFields" hidden>
+      <section class="card">
+        <h2>処置</h2>
+        <div id="sSteps"></div>
+        <p id="sStepDrugs" class="hint"></p>
+        <div class="field"><span class="label">朝・夕</span><div id="sAsayu" class="seg"></div></div>
+        <label class="field"><span>メモ</span><textarea id="srMemo" rows="2" placeholder="例: 7:10 投与"></textarea></label>
       </section>
     </div>
 
@@ -289,7 +343,7 @@
 <template id="moveGroupTpl">
   <section class="card mgroup">
     <div class="calf-head"><h2>移動先<span class="no"></span></h2><button type="button" class="link remove">削除</button></div>
-    <div class="field m-groups-box"><span class="label req">移動の向き</span><div class="seg m-groups"></div></div>
+    <div class="field m-groups-box"><span class="label req">行き先</span><div class="seg m-groups"></div></div>
     <div class="field"><span class="label req">移動先の牛群</span><div class="seg m-herds"></div></div>
     <div class="field"><span class="label req">移動する牛（耳標か、10桁の個体識別番号）</span>
       <div class="m-cows"></div>
@@ -306,6 +360,21 @@
       <button type="button" class="small m-delcow" aria-label="この牛を外す">✕</button>
     </div>
     <div class="chips m-hits"></div>
+  </div>
+</template>
+
+<template id="drugTpl">
+  <div class="drug">
+    <div class="cow-row">
+      <select class="d-name"></select>
+      <button type="button" class="small d-del" aria-label="この薬を外す">✕</button>
+    </div>
+    <input class="d-other" autocomplete="off" placeholder="薬の名前（Farmnote の表記）" hidden style="margin-bottom:8px">
+    <div class="drug-row">
+      <input class="d-qty" type="number" inputmode="decimal" min="0" step="any" placeholder="量">
+      <input class="d-unit" autocomplete="off" placeholder="単位">
+      <select class="d-route"></select>
+    </div>
   </div>
 </template>
 

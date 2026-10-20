@@ -16,12 +16,24 @@ const ACTIVITY_INFO = {
   shippei: { title: '疾病の報告', cow: '牛', date: '発生日', color: '#b45309' },
   haiyou: { title: '死亡・廃用の報告', cow: '牛', date: '死亡・廃用の日', color: '#4b5563' },
   idou: { title: '牛群移動の報告', cow: '牛', date: '移動日', color: '#1d5fa8' },
+  chiryou: { title: '治療の報告', cow: '牛', date: '治療日', color: '#6d28d9' },
+  sairan: { title: '採卵の処置', cow: '牛', date: '処置日', color: '#be185d' },
 };
+// 「その他の報告」ボタン（?type=other）から選ぶ種類
+const OTHER_TYPES = [
+  ['haiyou', '死亡・廃用', '死亡・淘汰と理由'],
+  ['chiryou', '治療（アブレスト以外）', '薬・量・投薬区分'],
+  ['sairan', '採卵の処置（定時授精）', 'OPU と体内採卵の各回の注射・シダー'],
+];
 const MAX_MOVES = 4; // 牛群移動の1回の報告で送れる頭数（GAS と同じ。5頭以上は PC で入れる）
+const MAX_COWS = 10; // 治療・採卵の処置の1回の報告で送れる頭数（GAS と同じ）
+const MAX_DRUGS = 10; // 治療の薬の数（GAS と同じ）
 const HERDS_FIRST = 8; // 移動先の牛群は「牛群」タブの上から8つを出し、残りは「ほかの牛群」で開く
-const ACTIVITY = ACTIVITY_INFO[PARAMS.get('type')] ? PARAMS.get('type') : 'bunben';
-const INFO = ACTIVITY_INFO[ACTIVITY];
-const OTHER = '__other__'; // 疾病名「その他（入力）」
+const PICKING = PARAMS.get('type') === 'other'; // 種類を選ぶ画面から始める
+// 報告の種類。「その他の報告」から選んだときに決まるので let
+let ACTIVITY = ACTIVITY_INFO[PARAMS.get('type')] ? PARAMS.get('type') : 'bunben';
+let INFO = ACTIVITY_INFO[ACTIVITY];
+const OTHER = '__other__'; // 疾病名・薬「その他（入力）」
 const TRIAL_KEY_STORE = 'bunben-trial-key';
 const TIME_KINDS = [['found', '生まれていた（子牛発見時刻）'], ['birth', '分娩に立ち会った（分娩時刻）']];
 const STORE_KEY = 'bunben-form';
@@ -38,6 +50,9 @@ const state = {
   dairyBreeds: [],
   wagyuBreeds: [],
   wagyuFemaleTypes: [],
+  drugs: [],
+  sairanSteps: [],
+  links: [],
   canPost: false,
   trialKey: '',
   view: 'form',
@@ -82,12 +97,59 @@ async function start() {
   state.dairyBreeds = res.dairyBreeds || [];
   state.wagyuBreeds = res.wagyuBreeds || [];
   state.wagyuFemaleTypes = res.wagyuFemaleTypes || [];
+  state.drugs = res.drugs || [];
+  state.sairanSteps = res.sairanSteps || [];
+  state.links = res.links || [];
   if (!state.farms.length) throw new Error('設定シート「牧場」に牧場がありません');
-  setupForm();
   $('#loading').hidden = true;
-  $('#footer').hidden = false;
   if (PARAMS.get('admin') === 'menu' && state.user.isAdmin) setupAdmin();
+  if (PICKING) {
+    showChooser();
+    return;
+  }
+  openForm();
+}
+
+function openForm() {
+  setupForm();
+  $('#chooser').hidden = true;
+  $('#footer').hidden = false;
   showView('form');
+}
+
+/** 「その他の報告」: 種類を選ぶ大きいボタン。押すとその報告のフォームになる */
+function showChooser() {
+  document.title = 'その他の報告';
+  $('#title').textContent = 'その他の報告';
+  $('#who').textContent = `${(state.user && state.user.name) || state.profile.displayName || ''} さん`;
+  const box = $('#chooserButtons');
+  OTHER_TYPES.forEach(([type, label, note]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'primary chooser-btn';
+    b.style.background = ACTIVITY_INFO[type].color;
+    b.innerHTML = '<span></span><small></small>';
+    b.firstChild.textContent = label;
+    b.lastChild.textContent = note;
+    b.addEventListener('click', () => {
+      ACTIVITY = type;
+      INFO = ACTIVITY_INFO[type];
+      openForm();
+    });
+    box.append(b);
+  });
+  // 別のフォーム（音声メモなど）は、その WOFF を開く
+  (state.links || []).forEach((link) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'secondary chooser-btn';
+    b.innerHTML = '<span></span><small></small>';
+    b.firstChild.textContent = link.label;
+    b.lastChild.textContent = link.note || '';
+    b.addEventListener('click', () => { location.href = link.uri; });
+    box.append(b);
+  });
+  $('#chooser').hidden = false;
 }
 
 /** 管理者が ?admin=menu で開いたとき: Bot の固定メニュー（トークルームの下のボタン）を登録する */
@@ -186,12 +248,111 @@ function setupForm() {
   $('#form').addEventListener('change', () => { state.pendingId = ''; });
 
   $(`#${ACTIVITY}Fields`).hidden = false;
-  $('#cowCard').hidden = ACTIVITY === 'idou'; // 牛群移動は牛ごとのカードで入れる
+  // 牛群移動は移動先のカードで、治療・採卵の処置は複数頭の欄で牛を入れる
+  const multi = isMultiCow();
+  $('#cowCard').hidden = ACTIVITY === 'idou' || multi;
+  $('#multiCowCard').hidden = !multi;
+  if (multi) {
+    $('#addCowRow').addEventListener('click', () => {
+      const tag = addCowRow();
+      if (tag) tag.focus();
+    });
+    addCowRow();
+  }
   if (ACTIVITY === 'bunben') setupBunben();
   if (ACTIVITY === 'shippei') setupShippei();
   if (ACTIVITY === 'haiyou') setupHaiyou();
   if (ACTIVITY === 'idou') setupIdou();
+  if (ACTIVITY === 'chiryou') setupChiryou();
+  if (ACTIVITY === 'sairan') setupSairan();
   applyFarm();
+}
+
+function isMultiCow() {
+  return ACTIVITY === 'chiryou' || ACTIVITY === 'sairan';
+}
+
+function setupChiryou() {
+  segment($('#cKubun'), 'cKubun', state.choices.chiryouKubun, state.choices.chiryouKubun[0]);
+  fillSelect($('#cDisease'), state.diseases, 'なし（入れない）');
+  $('#cDisease').append(new Option('その他（入力）', OTHER));
+  $('#cDisease').addEventListener('change', () => {
+    $('#cDiseaseOtherField').hidden = $('#cDisease').value !== OTHER;
+  });
+  segment($('#cStatus'), 'cStatus', state.choices.status, '');
+  $('#addDrug').addEventListener('click', () => addDrug());
+  addDrug();
+}
+
+/** 薬の1行: 「薬」タブから選ぶと、いつもの量・単位・投薬区分が入る。無い薬は「その他（入力）」 */
+function addDrug() {
+  const list = $('#drugList');
+  if (list.children.length >= MAX_DRUGS) return;
+  const node = $('#drugTpl').content.firstElementChild.cloneNode(true);
+  const nameEl = $('.d-name', node);
+  fillSelect(nameEl, state.drugs.map((d) => d.name), '薬を選ぶ');
+  nameEl.append(new Option('その他（入力）', OTHER));
+  fillSelect($('.d-route', node), state.choices.route, '投薬区分');
+  nameEl.addEventListener('change', () => {
+    $('.d-other', node).hidden = nameEl.value !== OTHER;
+    const d = state.drugs.find((x) => x.name === nameEl.value);
+    if (d) {
+      $('.d-qty', node).value = d.qty;
+      $('.d-unit', node).value = d.unit;
+      $('.d-route', node).value = state.choices.route.includes(d.route) ? d.route : '';
+    }
+  });
+  $('.d-del', node).addEventListener('click', () => {
+    node.remove();
+    renumberDrugs();
+    state.pendingId = '';
+  });
+  list.append(node);
+  renumberDrugs();
+}
+
+function renumberDrugs() {
+  const nodes = $$('#drugList .drug');
+  nodes.forEach((n) => { $('.d-del', n).hidden = nodes.length === 1; });
+  $('#addDrug').hidden = nodes.length >= MAX_DRUGS;
+}
+
+/** 採卵の処置: 「採卵の処置」タブの処置を区分（OPU・体内採卵）ごとのボタンで出す。選ぶと使う薬が下に出る */
+function setupSairan() {
+  const box = $('#sSteps');
+  const kubuns = [...new Set(state.sairanSteps.map((s) => s.kubun))];
+  kubuns.forEach((k) => {
+    if (k) {
+      const h = document.createElement('div');
+      h.className = 'step-group';
+      h.textContent = k;
+      box.append(h);
+    }
+    const seg = document.createElement('div');
+    seg.className = 'seg sStepSeg';
+    segment(seg, 'sStep', state.sairanSteps.filter((s) => s.kubun === k).map((s) => s.name), '');
+    box.append(seg);
+  });
+  segment($('#sAsayu'), 'sAsayu', state.choices.asayu, '');
+  $$('input[name="sStep"]', box).forEach((el) => el.addEventListener('change', () => {
+    $$('.sStepSeg', box).forEach((s) => s.classList.remove('invalid'));
+    showStepDrugs();
+    // 処置の名前に朝・夕があれば合わせる
+    const t = state.choices.asayu.find((x) => el.value.includes(x));
+    if (t) check('sAsayu', t);
+  }));
+  showStepDrugs();
+}
+
+function currentStep() {
+  return state.sairanSteps.find((s) => s.name === value('sStep')) || null;
+}
+
+function showStepDrugs() {
+  const step = currentStep();
+  $('#sStepDrugs').textContent = step
+    ? `入る薬: ${step.drugs.map((d) => [d.name, d.qty, d.route].filter(Boolean).join(' ')).join('、')}`
+    : '処置を選ぶと、Farmnote に入る薬が出ます';
 }
 
 function setupBunben() {
@@ -328,8 +489,8 @@ function fillTagFromId(idEl, tagEl) {
 // ---------- 牛群移動 ----------
 
 /**
- * 移動先のカード。向きと移動先の牛群を1回選び、同じ移動先へ行く牛を何頭でも（合計4頭まで）並べる。
- * 交換のように移動先が違うときは「別の移動先を追加」でカードを増やす（反対の向きが開く）
+ * 移動先のカード。行き先（アブレスト・希望・VMS）と移動先の牛群を1回選び、同じ移動先へ行く牛を（合計4頭まで）並べる。
+ * 交換のように移動先が違うときは「別の移動先を追加」でカードを増やす（まだ使っていない行き先が開く）
  */
 function addGroup() {
   if (moveCowCount() >= MAX_MOVES) return;
@@ -338,9 +499,8 @@ function addGroup() {
   node.dataset.key = `m${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
   node.dataset.herd = '';
   const groups = herdGroups();
-  const prev = list.lastElementChild;
-  const prevGroup = prev ? prev.dataset.group : '';
-  node.dataset.group = prevGroup === groups[0] && groups[1] ? groups[1] : groups[0] || '';
+  const used = $$('.mgroup', list).map((g) => g.dataset.group);
+  node.dataset.group = groups.find((g) => !used.includes(g)) || groups[0] || '';
   $('.remove', node).addEventListener('click', () => {
     node.remove();
     renumberGroups();
@@ -356,12 +516,23 @@ function addGroup() {
   renumberGroups();
 }
 
-/** 移動する牛の1行。耳標を入れる（10桁の数字なら個体識別番号として扱う） */
+/** 移動する牛の1行（移動先のカードの中） */
 function addCow(group) {
   if (moveCowCount() >= MAX_MOVES) return null;
+  const row = cowRow(renumberGroups);
+  $('.m-cows', group).append(row);
+  renumberGroups();
+  return $('.m-tag', row);
+}
+
+/**
+ * 牛の1行（牛群移動・治療・採卵の処置で共通）。耳標を入れる（10桁の数字なら個体識別番号として扱う）。
+ * 「母牛」タブに合う牛があれば候補ボタンを出す。✕で行を消したら onChange を呼ぶ
+ */
+function cowRow(onChange) {
   const row = $('#moveCowTpl').content.firstElementChild.cloneNode(true);
   const tagEl = $('.m-tag', row);
-  const idEl = $('.m-id', row); // 「母牛」タブの候補を選んだときの個体識別番号（見えない）
+  const idEl = $('.m-id', row); // 候補を選んだときの個体識別番号（見えない）
   tagEl.addEventListener('input', () => {
     idEl.value = '';
     cowHits(tagEl, idEl, $('.m-hits', row));
@@ -369,12 +540,47 @@ function addCow(group) {
   fixTagOnBlur(tagEl);
   $('.m-delcow', row).addEventListener('click', () => {
     row.remove();
-    renumberGroups();
+    onChange();
     state.pendingId = '';
   });
-  $('.m-cows', group).append(row);
-  renumberGroups();
-  return tagEl;
+  return row;
+}
+
+/** 行の耳標・個体識別番号を読む（空の行は null） */
+function readCowRow(row) {
+  const v = fixTag($('.m-tag', row).value);
+  if (!v) return null;
+  const isId = /^\d{10}$/.test(v);
+  return { tag: isId ? '' : v, id: isId ? v : $('.m-id', row).value };
+}
+
+/** 治療・採卵の処置の牛の欄に1行足す */
+function addCowRow() {
+  if ($$('#cowList .m-cow').length >= MAX_COWS) return null;
+  const row = cowRow(renumberCowRows);
+  $('#cowList').append(row);
+  renumberCowRows();
+  return $('.m-tag', row);
+}
+
+function renumberCowRows() {
+  const rows = $$('#cowList .m-cow');
+  rows.forEach((row) => { $('.m-delcow', row).hidden = rows.length === 1; });
+  $('#addCowRow').hidden = rows.length >= MAX_COWS;
+}
+
+/** 耳標の行のチェック（牛群移動・治療・採卵の処置で共通）。seen は同じ報告の中の二重入力を見る */
+function checkCowRows(rows, bad, seen, prefix) {
+  const filled = rows.filter((row) => readCowRow(row));
+  if (!filled.length && rows.length) bad($('.m-tag', rows[0]), `${prefix}牛の耳標を入れてください`);
+  filled.forEach((row) => {
+    const el = $('.m-tag', row);
+    const v = fixTag(el.value);
+    if (/^\d{5,9}$|^\d{11,}$/.test(v)) bad(el, `「${v}」: 個体識別番号なら10桁です`);
+    const key = /^\d{10}$/.test(v) ? v : normalize(v);
+    if (seen.has(key)) bad(el, `「${v}」が2回入っています`);
+    seen.add(key);
+  });
 }
 
 function moveCowCount() {
@@ -400,12 +606,12 @@ function currentHerds() {
   return farm && farm.herds ? farm.herds : [];
 }
 
-/** 「牛群」タブの移動の向き（上から出てきた順）。フォームではタブとして出す */
+/** 「牛群」タブの行き先（上から出てきた順）。フォームではタブとして出す */
 function herdGroups() {
   return [...new Set(currentHerds().map((h) => h.group))];
 }
 
-/** 移動の向きのタブを出し、選んだ向きの移動先の牛群をボタンで出す */
+/** 行き先のタブを出し、選んだ行き先の牛群をボタンで出す */
 function renderGroups(node) {
   const groups = herdGroups();
   const box = $('.m-groups', node);
@@ -595,16 +801,41 @@ function collect() {
       damId: '',
       memo: $('#iMemo').value.trim(),
       // 移動先のカードごとの牛を1頭ずつに並べる。空の行は飛ばす。10桁の数字は個体識別番号として送る
-      moves: $$('#moveGroups .mgroup').flatMap((g) => $$('.m-cow', g).map((row) => {
-        const v = fixTag($('.m-tag', row).value);
-        const isId = /^\d{10}$/.test(v);
-        return {
-          tag: isId ? '' : v,
-          id: isId ? v : $('.m-id', row).value,
-          herd: g.dataset.herd,
-          dir: g.dataset.herd ? g.dataset.group : '', // トークに出す移動の向き（シートには保存しない）
-        };
-      }).filter((mv) => mv.tag || mv.id)),
+      moves: $$('#moveGroups .mgroup').flatMap((g) => $$('.m-cow', g).map(readCowRow).filter(Boolean).map((c) => ({
+        ...c,
+        herd: g.dataset.herd,
+        dir: g.dataset.herd ? g.dataset.group : '', // トークに出す行き先（シートには保存しない）
+      }))),
+    };
+  }
+  if (ACTIVITY === 'chiryou') {
+    return {
+      ...base,
+      damTag: '',
+      damId: '',
+      cows: $$('#cowList .m-cow').map(readCowRow).filter(Boolean),
+      kubun: value('cKubun'),
+      disease: $('#cDisease').value === OTHER ? $('#cDiseaseOther').value.trim() : $('#cDisease').value,
+      temp: $('#cTemp').value.trim(),
+      status: value('cStatus'),
+      drugs: $$('#drugList .drug').map((n) => ({
+        name: $('.d-name', n).value === OTHER ? $('.d-other', n).value.trim() : $('.d-name', n).value,
+        qty: $('.d-qty', n).value.trim(),
+        unit: $('.d-unit', n).value.trim(),
+        route: $('.d-route', n).value,
+      })).filter((d) => d.name || d.qty),
+      memo: $('#cMemo').value.trim(),
+    };
+  }
+  if (ACTIVITY === 'sairan') {
+    return {
+      ...base,
+      damTag: '',
+      damId: '',
+      cows: $$('#cowList .m-cow').map(readCowRow).filter(Boolean),
+      step: value('sStep'),
+      asayu: value('sAsayu'),
+      memo: $('#srMemo').value.trim(),
     };
   }
   return {
@@ -637,16 +868,19 @@ function validate(r) {
   };
   $$('.invalid').forEach((el) => el.classList.remove('invalid'));
   if (!r.farm) bad($('#farm'), '牧場を選んでください');
-  if (ACTIVITY !== 'idou' && !r.damTag && !r.damId) {
+  const ownCows = ACTIVITY === 'idou' || isMultiCow(); // 牛を自分の欄で入れる種類
+  if (!ownCows && !r.damTag && !r.damId) {
     bad($('#damTag'), `${INFO.cow}の耳標か個体識別番号を入れてください`);
     $('#damId').classList.add('invalid');
   }
   if (r.damId && r.damId.length !== 10) bad($('#damId'), `${INFO.cow}の個体識別番号は10桁です`);
   if (ACTIVITY === 'idou') validateMoves(r, bad);
+  if (ACTIVITY === 'chiryou') validateChiryou(r, bad);
+  if (ACTIVITY === 'sairan') validateSairan(r, bad);
   if (!r.date) bad($('#date'), `${INFO.date}を入れてください`);
   else if (r.date > today()) bad($('#date'), `${INFO.date}が未来になっています`);
   if (!r.worker) bad($('#worker'), '作業者を選んでください');
-  if (ACTIVITY === 'idou') return errors;
+  if (ownCows) return errors;
   if (ACTIVITY === 'shippei') {
     if (!r.disease) bad($('#disease').value === OTHER ? $('#diseaseOther') : $('#disease'), '疾病名を選ぶか入れてください');
     if (!r.temp && !r.noTemp) bad($('#temp'), '体温を入れてください（測っていなければチェック）');
@@ -686,21 +920,35 @@ function validateMoves(r, bad) {
   const groups = $$('#moveGroups .mgroup');
   const seen = new Set();
   groups.forEach((g, i) => {
-    const p = groups.length > 1 ? `移動先${i + 1}の` : '';
-    const rows = $$('.m-cow', g);
-    const filled = rows.filter((row) => fixTag($('.m-tag', row).value));
-    if (!filled.length) bad($('.m-tag', rows[0]), `${p}牛の耳標を入れてください`);
+    checkCowRows($$('.m-cow', g), bad, seen, groups.length > 1 ? `移動先${i + 1}の` : '');
     if (!g.dataset.herd) bad($('.m-herds', g), groups.length > 1 ? `移動先${i + 1}の牛群を選んでください` : '移動先の牛群を選んでください');
-    filled.forEach((row) => {
-      const el = $('.m-tag', row);
-      const v = fixTag(el.value);
-      if (/^\d{5,9}$|^\d{11,}$/.test(v)) bad(el, `「${v}」: 個体識別番号なら10桁です`);
-      const key = /^\d{10}$/.test(v) ? v : normalize(v);
-      if (seen.has(key)) bad(el, `「${v}」が2回入っています`);
-      seen.add(key);
-    });
   });
   if (r.moves.length > MAX_MOVES) bad(null, `1回に送れるのは${MAX_MOVES}頭までです`);
+}
+
+/** 治療: 牛・治療区分・薬（1つ以上。その他は名前を入れる）。体温は入れたときだけ範囲を見る */
+function validateChiryou(r, bad) {
+  checkCowRows($$('#cowList .m-cow'), bad, new Set(), '');
+  if (!r.kubun) bad($('#cKubun'), '治療区分を選んでください');
+  if ($('#cDisease').value === OTHER && !r.disease) bad($('#cDiseaseOther'), '疾病名を入れてください（無ければ「なし」）');
+  const nodes = $$('#drugList .drug');
+  if (!r.drugs.length) bad($('.d-name', nodes[0]), '薬を選んでください');
+  nodes.forEach((n, i) => {
+    const no = nodes.length > 1 ? `薬${i + 1}` : '薬';
+    const sel = $('.d-name', n);
+    const name = sel.value === OTHER ? $('.d-other', n).value.trim() : sel.value;
+    const qty = $('.d-qty', n).value.trim();
+    if (!name && qty) bad(sel.value === OTHER ? $('.d-other', n) : sel, `${no}を選んでください`);
+    if (sel.value === OTHER && !name) bad($('.d-other', n), `${no}の名前を入れてください`);
+    if (qty && !(Number(qty) > 0)) bad($('.d-qty', n), `${no}の量を確認してください`);
+  });
+  if (r.temp && !(Number(r.temp) >= 35 && Number(r.temp) <= 43)) bad($('#cTemp'), '体温を確認してください（35〜43℃）');
+}
+
+/** 採卵の処置: 牛と処置 */
+function validateSairan(r, bad) {
+  checkCowRows($$('#cowList .m-cow'), bad, new Set(), '');
+  if (!r.step) $$('.sStepSeg').forEach((s, i) => (i === 0 ? bad(s, '処置を選んでください') : s.classList.add('invalid')));
 }
 
 function onNext() {
@@ -818,10 +1066,23 @@ function resetForNext() {
   } else if (ACTIVITY === 'haiyou') {
     ['#hReason', '#hMemo'].forEach((s) => { $(s).value = ''; });
     $$('#hKind input').forEach((el) => { el.checked = false; });
-  } else {
+  } else if (ACTIVITY === 'idou') {
     $('#iMemo').value = '';
     $('#moveGroups').textContent = '';
     addGroup();
+  } else if (ACTIVITY === 'chiryou') {
+    // 続けて同じ治療を別の牛に入れることが多いので、治療区分・薬は残し、牛・体温・メモだけ空にする
+    ['#cTemp', '#cMemo'].forEach((s) => { $(s).value = ''; });
+    $$('#cStatus input').forEach((el) => { el.checked = false; });
+  } else if (ACTIVITY === 'sairan') {
+    // 同じ日の次の処置へ。処置・朝夕を外し、牛は残す（同じドナーに続けて打つことが多い）
+    $$('input[name="sStep"], #sAsayu input').forEach((el) => { el.checked = false; });
+    $('#srMemo').value = '';
+    showStepDrugs();
+  }
+  if (ACTIVITY === 'chiryou') {
+    $('#cowList').textContent = '';
+    addCowRow();
   }
   state.pendingId = '';
   showView('form');
@@ -896,6 +1157,24 @@ function reportRows(r, time) {
     return { title: `${r.kind}の報告`, rows: rows.concat(tail) };
   }
   if (r.activity === 'idou') return idouRows(r, day, isToday, tail);
+  const cowsLine = (cows) => cows.map((c) => c.tag || c.id).join('・');
+  const cowsLabel = (cows) => (cows.length > 1 ? `${cows.length}頭` : '牛');
+  if (r.activity === 'chiryou') {
+    // 薬は「名前 量」を1行にまとめる（「メロキシリン注5% 5ml、トラムリン注 5ml」）
+    const drugs = r.drugs.map((d) => [d.name, d.qty ? `${d.qty}${d.unit}` : ''].filter(Boolean).join(' ')).join('、');
+    const rows = [[cowsLabel(r.cows), cowsLine(r.cows)]];
+    if (r.disease) rows.push(['疾病名', r.disease]);
+    rows.push(['薬', drugs]);
+    if (r.temp) rows.push(['体温', `${Number(r.temp).toFixed(1)}℃`]);
+    if (r.status) rows.push(['ステータス', r.status]);
+    if (!isToday) rows.push(['治療日', day]);
+    return { title: r.kubun === '治療' ? '治療の報告' : `${r.kubun}の報告`, rows: rows.concat(tail) };
+  }
+  if (r.activity === 'sairan') {
+    const rows = [['処置', [r.step, r.asayu && !r.step.includes(r.asayu) ? `（${r.asayu}）` : ''].join('')], [cowsLabel(r.cows), cowsLine(r.cows)]];
+    if (!isToday) rows.push(['処置日', day]);
+    return { title: '採卵の処置', rows: rows.concat(tail) };
+  }
   const how = r.timeKind === 'birth' ? '分娩に立ち会い' : '子牛を発見';
   const rows = [
     ['母牛', cow],
@@ -927,8 +1206,8 @@ function isSelf(worker) {
 }
 
 /**
- * 牛群移動のカード。同じ向き・同じ移動先の牛は1行にまとめる（「ネ145・ネ146 → VMS_VIC」）。
- * 向きが1つなら見出しに出し（「牛群移動 希望 → DP」）、2つ（交換）なら行の頭に出す
+ * 牛群移動のカード。同じ行き先・同じ牛群の牛は1行にまとめる（「ネ145・ネ146 → VMS_VIC」）。
+ * 行き先が1つなら見出しに出し（「牛群移動 → VMS」）、2つ以上（交換など）なら行の頭に出す
  */
 function idouRows(r, day, isToday, tail) {
   const groups = [];
@@ -937,13 +1216,13 @@ function idouRows(r, day, isToday, tail) {
     if (!g) groups.push((g = { dir: mv.dir, herd: mv.herd, cows: [] }));
     g.cows.push(mv.tag || mv.id);
   });
-  const dirs = [...new Set(groups.map((g) => g.dir))];
+  const dests = [...new Set(groups.map((g) => g.dir))];
   const rows = groups.map((g) => [
-    dirs.length > 1 ? g.dir.replace(/\s+/g, '') : g.cows.length > 1 ? `${g.cows.length}頭` : '牛',
+    dests.length > 1 ? g.dir : g.cows.length > 1 ? `${g.cows.length}頭` : '牛',
     `${g.cows.join('・')} → ${g.herd}`,
   ]);
   if (!isToday) rows.push(['移動日', day]);
-  const title = dirs.length > 1 ? '牛群移動（交換）' : ['牛群移動', dirs[0]].filter(Boolean).join(' ');
+  const title = dests.length === 1 && dests[0] ? `牛群移動 → ${dests[0]}` : '牛群移動';
   return { title, rows: rows.concat(tail) };
 }
 
