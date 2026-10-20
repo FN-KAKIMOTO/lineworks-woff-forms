@@ -6,9 +6,19 @@ const CONFIG = {
   gasUrl: 'https://script.google.com/macros/s/AKfycbxeEl4u7byBq21WFH3mvap8JZ-HnzlqYByUhncD_jDPivvF98okpf0PI487SNvMh7Rcow/exec',
 };
 
-const MOCK = new URLSearchParams(location.search).has('mock');
+const PARAMS = new URLSearchParams(location.search);
+const MOCK = PARAMS.has('mock');
 // 試行モード（?trial=1）: WOFF を使わずブラウザで開く。キー（GAS の TRIAL_KEY）は初回に貼り付けてもらい、その端末に保存する
-const TRIAL = new URLSearchParams(location.search).has('trial');
+const TRIAL = PARAMS.has('trial');
+// 報告の種類。トークルームの下のボタン（Bot の固定メニュー）から ?type=… で開く
+const ACTIVITY_INFO = {
+  bunben: { title: '分娩の報告', cow: '母牛', date: '分娩日', button: '＋ 分娩を報告する', color: '#2f7d4f' },
+  shippei: { title: '疾病の報告', cow: '牛', date: '発生日', button: '＋ 疾病を報告する', color: '#b45309' },
+  haiyou: { title: '死亡・廃用の報告', cow: '牛', date: '死亡・廃用の日', button: '＋ 死亡・廃用を報告する', color: '#4b5563' },
+};
+const ACTIVITY = ACTIVITY_INFO[PARAMS.get('type')] ? PARAMS.get('type') : 'bunben';
+const INFO = ACTIVITY_INFO[ACTIVITY];
+const OTHER = '__other__'; // 疾病名「その他（入力）」
 const TRIAL_KEY_STORE = 'bunben-trial-key';
 const TIME_KINDS = [['found', '生まれていた（子牛発見時刻）'], ['birth', '分娩に立ち会った（分娩時刻）']];
 const STORE_KEY = 'bunben-form';
@@ -20,6 +30,7 @@ const state = {
   token: '',
   user: null,
   farms: [],
+  diseases: [],
   choices: null,
   dairyBreeds: [],
   canPost: false,
@@ -61,13 +72,32 @@ async function start() {
   if (TRIAL) writeStore(TRIAL_KEY_STORE, state.trialKey);
   state.user = res.user;
   state.farms = res.farms;
+  state.diseases = res.diseases || [];
   state.choices = res.choices;
   state.dairyBreeds = res.dairyBreeds;
   if (!state.farms.length) throw new Error('設定シート「牧場」に牧場がありません');
   setupForm();
   $('#loading').hidden = true;
   $('#footer').hidden = false;
+  if (PARAMS.get('admin') === 'menu' && state.user.isAdmin) setupAdmin();
   showView('form');
+}
+
+/** 管理者が ?admin=menu で開いたとき: Bot の固定メニュー（トークルームの下のボタン）を登録する */
+function setupAdmin() {
+  $('#adminBox').hidden = false;
+  $('#setupMenu').addEventListener('click', async () => {
+    $('#setupMenu').disabled = true;
+    $('#adminResult').textContent = '登録しています…';
+    try {
+      const res = await api('setupMenu');
+      $('#adminResult').textContent = `登録しました: ${res.menu.join(' / ')}`;
+    } catch (e) {
+      $('#adminResult').textContent = e.message;
+    } finally {
+      $('#setupMenu').disabled = false;
+    }
+  });
 }
 
 /** 試行モードで初めて開いたとき、キーを貼り付けてもらう */
@@ -132,18 +162,14 @@ function setupForm() {
   $('#farm').addEventListener('change', () => applyFarm());
   $('#farmCard').hidden = state.farms.length === 1;
 
+  document.title = INFO.title;
+  $('#title').textContent = INFO.title;
+  $('#cowTitle').textContent = INFO.cow;
+  $('#dateLabel').textContent = INFO.date;
   $('#date').value = today();
   $('#date').max = today();
-  segment($('#kind'), 'kind', state.choices.kind, '出産');
-  segment($('#difficulty'), 'difficulty', state.choices.difficulty, '自然分娩');
-  // 時刻そのものは送信した時刻（GAS 側で入れる）。ここではどちらの列に入れるかだけ選ぶ
-  segment($('#timeKind'), 'timeKind', TIME_KINDS, 'found');
-  $$('input[name="kind"]').forEach((el) => el.addEventListener('change', applyKind));
-
   $('#damTag').addEventListener('input', showDamHits);
   $('#damId').addEventListener('input', onDamId);
-
-  $('#addCalf').addEventListener('click', () => addCalf());
   $('#next').addEventListener('click', onNext);
   $('#back').addEventListener('click', onBack);
 
@@ -151,9 +177,46 @@ function setupForm() {
   $('#form').addEventListener('input', () => { state.pendingId = ''; });
   $('#form').addEventListener('change', () => { state.pendingId = ''; });
 
-  addCalf();
+  $(`#${ACTIVITY}Fields`).hidden = false;
+  if (ACTIVITY === 'bunben') setupBunben();
+  if (ACTIVITY === 'shippei') setupShippei();
+  if (ACTIVITY === 'haiyou') setupHaiyou();
   applyFarm();
+}
+
+function setupBunben() {
+  segment($('#kind'), 'kind', state.choices.kind, '出産');
+  segment($('#difficulty'), 'difficulty', state.choices.difficulty, '自然分娩');
+  // 時刻そのものは送信した時刻（GAS 側で入れる）。ここではどちらの列に入れるかだけ選ぶ
+  segment($('#timeKind'), 'timeKind', TIME_KINDS, 'found');
+  $$('input[name="kind"]').forEach((el) => el.addEventListener('change', applyKind));
+  $('#addCalf').addEventListener('click', () => addCalf());
+  addCalf();
   applyKind();
+}
+
+function setupShippei() {
+  // 疾病名は「疾病名」タブの選択肢から選ぶ。無い病名は「その他（入力）」で書く
+  fillSelect($('#disease'), state.diseases, '選択してください');
+  $('#disease').append(new Option('その他（入力）', OTHER));
+  $('#disease').addEventListener('change', () => {
+    $('#diseaseOtherField').hidden = $('#disease').value !== OTHER;
+  });
+  $('#noTemp').addEventListener('change', () => {
+    $('#temp').disabled = $('#noTemp').checked;
+    if ($('#noTemp').checked) {
+      $('#temp').value = '';
+      $('#temp').classList.remove('invalid');
+    }
+  });
+  segment($('#shinryo'), 'shinryo', state.choices.shinryo, '');
+  segment($('#saishin'), 'saishin', state.choices.saishin, '');
+  segment($('#kousei'), 'kousei', state.choices.kousei, '');
+}
+
+function setupHaiyou() {
+  segment($('#hKind'), 'hKind', state.choices.haiyouKind, '');
+  fillSelect($('#hReason'), state.choices.haiyouReason, '選択してください');
 }
 
 function currentFarm() {
@@ -341,12 +404,31 @@ function autoType(node) {
 // ---------- 確認・送信 ----------
 
 function collect() {
-  return {
+  const base = {
+    activity: ACTIVITY,
     farm: $('#farm').value,
     damTag: $('#damTag').value.trim(),
     damId: $('#damId').value.trim(),
     date: $('#date').value,
     worker: $('#worker').value,
+  };
+  if (ACTIVITY === 'shippei') {
+    return {
+      ...base,
+      disease: $('#disease').value === OTHER ? $('#diseaseOther').value.trim() : $('#disease').value,
+      temp: $('#temp').value.trim(),
+      noTemp: $('#noTemp').checked,
+      shinryo: value('shinryo'),
+      saishin: value('saishin'),
+      kousei: value('kousei'),
+      memo: $('#sMemo').value.trim(),
+    };
+  }
+  if (ACTIVITY === 'haiyou') {
+    return { ...base, kind: value('hKind'), reason: $('#hReason').value, memo: $('#hMemo').value.trim() };
+  }
+  return {
+    ...base,
     memo: $('#memo').value.trim(),
     kind: value('kind'),
     difficulty: value('difficulty'),
@@ -376,13 +458,25 @@ function validate(r) {
   $$('.invalid').forEach((el) => el.classList.remove('invalid'));
   if (!r.farm) bad($('#farm'), '牧場を選んでください');
   if (!r.damTag && !r.damId) {
-    bad($('#damTag'), '母牛の耳標か個体識別番号を入れてください');
+    bad($('#damTag'), `${INFO.cow}の耳標か個体識別番号を入れてください`);
     $('#damId').classList.add('invalid');
   }
-  if (r.damId && r.damId.length !== 10) bad($('#damId'), '母牛の個体識別番号は10桁です');
-  if (!r.date) bad($('#date'), '分娩日を入れてください');
-  else if (r.date > today()) bad($('#date'), '分娩日が未来になっています');
+  if (r.damId && r.damId.length !== 10) bad($('#damId'), `${INFO.cow}の個体識別番号は10桁です`);
+  if (!r.date) bad($('#date'), `${INFO.date}を入れてください`);
+  else if (r.date > today()) bad($('#date'), `${INFO.date}が未来になっています`);
   if (!r.worker) bad($('#worker'), '作業者を選んでください');
+  if (ACTIVITY === 'shippei') {
+    if (!r.disease) bad($('#disease').value === OTHER ? $('#diseaseOther') : $('#disease'), '疾病名を選ぶか入れてください');
+    if (!r.temp && !r.noTemp) bad($('#temp'), '体温を入れてください（測っていなければチェック）');
+    if (r.temp && !(Number(r.temp) >= 35 && Number(r.temp) <= 43)) bad($('#temp'), '体温を確認してください（35〜43℃）');
+    if (!r.shinryo) bad($('#shinryo'), '獣医か自家治療かを選んでください');
+    return errors;
+  }
+  if (ACTIVITY === 'haiyou') {
+    if (!r.kind) bad($('#hKind'), '死亡か淘汰かを選んでください');
+    if (!r.reason) bad($('#hReason'), '理由を選んでください');
+    return errors;
+  }
   const birth = r.kind === '出産';
   if (birth && !r.difficulty) bad($('#difficulty'), '分娩難易を選んでください');
   const nodes = $$('#calves .calf');
@@ -501,14 +595,26 @@ async function postToTalk(report, time, message) {
 
 /** 続けて入力: 牧場・作業者・分娩日は残し、牛ごとの内容を空にする */
 function resetForNext() {
-  ['#damTag', '#damId', '#memo'].forEach((s) => { $(s).value = ''; });
+  ['#damTag', '#damId'].forEach((s) => { $(s).value = ''; });
   $('#damHits').textContent = '';
-  check('kind', '出産');
-  check('difficulty', '自然分娩');
-  check('timeKind', 'found');
-  $('#calves').textContent = '';
-  addCalf();
-  applyKind();
+  if (ACTIVITY === 'bunben') {
+    $('#memo').value = '';
+    check('kind', '出産');
+    check('difficulty', '自然分娩');
+    check('timeKind', 'found');
+    $('#calves').textContent = '';
+    addCalf();
+    applyKind();
+  } else if (ACTIVITY === 'shippei') {
+    ['#disease', '#diseaseOther', '#temp', '#sMemo'].forEach((s) => { $(s).value = ''; });
+    $('#diseaseOtherField').hidden = true;
+    $('#noTemp').checked = false;
+    $('#temp').disabled = false;
+    $$('#shinryo input, #saishin input, #kousei input').forEach((el) => { el.checked = false; });
+  } else {
+    ['#hReason', '#hMemo'].forEach((s) => { $(s).value = ''; });
+    $$('#hKind input').forEach((el) => { el.checked = false; });
+  }
   state.pendingId = '';
   showView('form');
   window.scrollTo(0, 0);
@@ -562,6 +668,25 @@ function reportRows(r, time) {
   const oneLine = (s) => s.replace(/\s*\n\s*/g, ' ');
   const [, m, d] = r.date.split('-').map(Number);
   const when = `${m}月${d}日 ${time || ''}`.trim();
+  const cow = r.damTag && r.damId ? `${r.damTag}（${r.damId}）` : r.damTag || r.damId;
+  if (r.activity === 'shippei') {
+    const rows = [
+      ['牛', cow],
+      ['発生日', `${m}月${d}日`],
+      ['疾病名', r.disease],
+      ['体温', r.temp ? `${Number(r.temp).toFixed(1)}℃` : '測っていない'],
+      ['診療', [r.shinryo, r.saishin, r.kousei].filter(Boolean).join('・')],
+    ];
+    if (r.memo) rows.push(['メモ', oneLine(r.memo)]);
+    rows.push(['作業者', r.worker]);
+    return { title: '疾病の報告', rows };
+  }
+  if (r.activity === 'haiyou') {
+    const rows = [['牛', cow], ['日付', `${m}月${d}日`], ['種別', r.kind], ['理由', r.reason]];
+    if (r.memo) rows.push(['メモ', oneLine(r.memo)]);
+    rows.push(['作業者', r.worker]);
+    return { title: `${r.kind}の報告`, rows };
+  }
   const rows = [
     ['母牛', r.damTag && r.damId ? `${r.damTag}（${r.damId}）` : r.damTag || r.damId],
     ['日時', `${when}（${r.timeKind === 'birth' ? '分娩に立ち会い' : '子牛を発見'}）`],
@@ -577,7 +702,7 @@ function reportRows(r, time) {
   });
   if (r.memo) rows.push(['メモ', oneLine(r.memo)]);
   rows.push(['作業者', r.worker]);
-  const title = r.kind === '出産' ? '分娩報告' : `${r.kind}の報告`;
+  const title = r.kind === '出産' ? '分娩の報告' : `${r.kind}の報告`;
   return { title, rows };
 }
 
@@ -590,7 +715,8 @@ function buildMessage(r, time) {
 /** トークに投稿するカード（Flexible Template）。下に次の報告を開く大きいボタンを付ける */
 function buildFlex(r, time) {
   const { title, rows } = reportRows(r, time);
-  const headColor = r.kind === '出産' ? '#2f7d4f' : '#7a5c2e';
+  const info = ACTIVITY_INFO[r.activity] || INFO;
+  const headColor = r.activity === 'bunben' && r.kind !== '出産' ? '#7a5c2e' : info.color;
   return {
     type: 'flex',
     altText: buildMessage(r, time).slice(0, 400),
@@ -628,7 +754,8 @@ function buildFlex(r, time) {
           style: 'primary',
           color: '#2f7d4f',
           height: 'md',
-          action: { type: 'uri', label: '＋ 分娩を報告する', uri: `https://woff.worksmobile.com/woff/${CONFIG.woffId}` },
+          // 次の報告を開く。WOFF URL に条件を付けるときは「/?」の形にする
+          action: { type: 'uri', label: info.button, uri: `https://woff.worksmobile.com/woff/${CONFIG.woffId}/?type=${r.activity}` },
         }],
       },
     },

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>分娩記録</title>
+<title>報告</title>
 <style>
   :root {
     --bg: #f3f4f1;
@@ -114,7 +114,7 @@
 </head>
 <body>
 <header class="bar">
-  <h1 id="title">分娩記録</h1>
+  <h1 id="title">報告</h1>
   <div id="who" class="who"></div>
 </header>
 
@@ -131,13 +131,20 @@
     <button type="submit" class="primary" style="width:100%;margin-top:12px">開く</button>
   </form>
 
+  <section id="adminBox" class="card" hidden>
+    <h2>管理: トークルームの下のボタン</h2>
+    <p class="hint">Bot「FDP報告ボタン」の固定メニュー（分娩・疾病・死亡廃用の3つのボタン）を登録します。</p>
+    <button type="button" id="setupMenu" class="primary" style="width:100%;margin-top:12px">固定メニューを登録する</button>
+    <p id="adminResult" class="notice"></p>
+  </section>
+
   <form id="form" novalidate hidden>
     <section class="card" id="farmCard">
       <label class="field"><span class="req">牧場</span><select id="farm"></select></label>
     </section>
 
     <section class="card">
-      <h2>母牛</h2>
+      <h2 id="cowTitle">母牛</h2>
       <label class="field"><span>耳標</span>
         <input id="damTag" autocomplete="off" placeholder="例: ネ146（数字だけでも検索）">
       </label>
@@ -149,22 +156,56 @@
     </section>
 
     <section class="card">
-      <h2>分娩</h2>
       <div class="row2">
-        <label class="field"><span class="req">分娩日</span><input id="date" type="date"></label>
+        <label class="field"><span class="req" id="dateLabel">分娩日</span><input id="date" type="date"></label>
         <label class="field"><span class="req">作業者</span><select id="worker"></select></label>
       </div>
-      <div class="field"><span class="label req">分類</span><div id="kind" class="seg"></div></div>
-      <div class="field"><span class="label" id="difficultyLabel">分娩難易</span><div id="difficulty" class="seg"></div></div>
-      <div class="field"><span class="label req">時刻の種類</span>
-        <div id="timeKind" class="seg"></div>
-        <p class="hint">時刻は送信した時刻が入ります（分娩日が今日のとき）</p>
-      </div>
-      <label class="field"><span>メモ</span><textarea id="memo" rows="2" placeholder="例: 281日 和牛"></textarea></label>
+      <p class="hint">作業者はボタンを押した人が入ります。代わりに入力するときだけ選び直してください</p>
     </section>
 
-    <div id="calves"></div>
-    <button type="button" id="addCalf" class="ghost">＋ 子牛を追加（双子）</button>
+    <!-- 分娩 -->
+    <div id="bunbenFields" hidden>
+      <section class="card">
+        <h2>分娩</h2>
+        <div class="field"><span class="label req">分類</span><div id="kind" class="seg"></div></div>
+        <div class="field"><span class="label" id="difficultyLabel">分娩難易</span><div id="difficulty" class="seg"></div></div>
+        <div class="field"><span class="label req">時刻の種類</span>
+          <div id="timeKind" class="seg"></div>
+          <p class="hint">時刻は送信した時刻が入ります（分娩日が今日のとき）</p>
+        </div>
+        <label class="field"><span>メモ</span><textarea id="memo" rows="2" placeholder="例: 281日 和牛"></textarea></label>
+      </section>
+      <div id="calves"></div>
+      <button type="button" id="addCalf" class="ghost">＋ 子牛を追加（双子）</button>
+    </div>
+
+    <!-- 疾病 -->
+    <div id="shippeiFields" hidden>
+      <section class="card">
+        <h2>疾病</h2>
+        <label class="field"><span class="req">疾病名</span><select id="disease"></select></label>
+        <label class="field" id="diseaseOtherField" hidden><span class="req">疾病名（入力）</span>
+          <input id="diseaseOther" autocomplete="off" placeholder="例: 足の切り傷"></label>
+        <div class="field"><label><span class="label req">体温（℃）</span>
+          <input id="temp" type="number" inputmode="decimal" min="35" max="43" step="0.1" placeholder="例: 39.4"></label>
+          <label class="check"><input type="checkbox" id="noTemp"> 測っていない</label>
+        </div>
+        <div class="field"><span class="label req">診療</span><div id="shinryo" class="seg"></div></div>
+        <div class="field"><span class="label">再診</span><div id="saishin" class="seg"></div></div>
+        <div class="field"><span class="label">抗生剤</span><div id="kousei" class="seg"></div></div>
+        <label class="field"><span>メモ（所見・投薬・肉休薬など）</span><textarea id="sMemo" rows="3" placeholder="例: 左前PL+ 肉休薬9/28まで"></textarea></label>
+      </section>
+    </div>
+
+    <!-- 死亡・廃用 -->
+    <div id="haiyouFields" hidden>
+      <section class="card">
+        <h2>死亡・廃用</h2>
+        <div class="field"><span class="label req">種別</span><div id="hKind" class="seg"></div></div>
+        <label class="field"><span class="req">理由</span><select id="hReason"></select></label>
+        <label class="field"><span>メモ</span><textarea id="hMemo" rows="3" placeholder="例: 突然死、右後ろ足の脱臼"></textarea></label>
+      </section>
+    </div>
 
     <div id="errors" class="errors" role="alert" hidden></div>
   </form>
