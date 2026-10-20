@@ -2,11 +2,14 @@
 
 // ===== デプロイ後に書き換える =====
 const CONFIG = {
-  woffId: '', // Developer Console で発行された WOFF ID
+  woffId: '8IjjeCbtPxsinTC8-7cXug', // Developer Console（アプリ「分娩報告フォーム」の WOFF「分娩報告」）で発行された WOFF ID
   gasUrl: 'https://script.google.com/macros/s/AKfycbxeEl4u7byBq21WFH3mvap8JZ-HnzlqYByUhncD_jDPivvF98okpf0PI487SNvMh7Rcow/exec',
 };
 
 const MOCK = new URLSearchParams(location.search).has('mock');
+// 試行モード（?trial=1）: WOFF を使わずブラウザで開く。キー（GAS の TRIAL_KEY）は初回に貼り付けてもらい、その端末に保存する
+const TRIAL = new URLSearchParams(location.search).has('trial');
+const TRIAL_KEY_STORE = 'bunben-trial-key';
 const TIME_KINDS = [['found', '生まれていた（子牛発見時刻）'], ['birth', '分娩に立ち会った（分娩時刻）']];
 const STORE_KEY = 'bunben-form';
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -20,6 +23,7 @@ const state = {
   choices: null,
   dairyBreeds: [],
   canPost: false,
+  trialKey: '',
   view: 'form',
   report: null,
   pendingId: '',
@@ -32,16 +36,28 @@ window.addEventListener('load', () => {
 
 async function start() {
   if (MOCK) await loadScript('mock.js');
-  if (!CONFIG.woffId && !MOCK) throw new Error('app.js の CONFIG.woffId が未設定です');
-  await woff.init({ woffId: CONFIG.woffId });
-  if (!woff.isLoggedIn()) {
-    woff.login();
-    return;
+  if (TRIAL) {
+    state.trialKey = readStore(TRIAL_KEY_STORE) || (await askTrialKey());
+    state.profile = { userId: '', displayName: '' };
+  } else {
+    if (!CONFIG.woffId && !MOCK) throw new Error('app.js の CONFIG.woffId が未設定です');
+    await woff.init({ woffId: CONFIG.woffId });
+    if (!woff.isLoggedIn()) {
+      woff.login();
+      return;
+    }
+    state.profile = await woff.getProfile();
+    state.token = woff.getAccessToken();
+    state.canPost = await canPostToTalk();
   }
-  state.profile = await woff.getProfile();
-  state.token = woff.getAccessToken();
-  state.canPost = await canPostToTalk();
-  const res = await api('config');
+  let res;
+  try {
+    res = await api('config');
+  } catch (e) {
+    if (TRIAL) writeStore(TRIAL_KEY_STORE, ''); // キーが違うときは次に開いたとき聞き直す
+    throw e;
+  }
+  if (TRIAL) writeStore(TRIAL_KEY_STORE, state.trialKey);
   state.user = res.user;
   state.farms = res.farms;
   state.choices = res.choices;
@@ -51,6 +67,22 @@ async function start() {
   $('#loading').hidden = true;
   $('#footer').hidden = false;
   showView('form');
+}
+
+/** 試行モードで初めて開いたとき、キーを貼り付けてもらう */
+function askTrialKey() {
+  return new Promise((resolve) => {
+    $('#loading').hidden = true;
+    $('#keyBox').hidden = false;
+    $('#keyBox').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const key = $('#trialKey').value.trim();
+      if (!key) return;
+      $('#keyBox').hidden = true;
+      $('#loading').hidden = false;
+      resolve(key);
+    });
+  });
 }
 
 /** スマホアプリのトークルームから開いたときだけ本人名義で投稿できる */
@@ -68,9 +100,10 @@ async function api(action, extra = {}) {
   let res;
   try {
     // Content-Type を付けない（text/plain）ことで、Apps Script へのプリフライトを避ける
+    const auth = TRIAL ? { trialKey: state.trialKey } : { token: state.token, userId: state.profile.userId };
     res = await fetch(CONFIG.gasUrl, {
       method: 'POST',
-      body: JSON.stringify({ action, token: state.token, userId: state.profile.userId, ...extra }),
+      body: JSON.stringify({ action, ...auth, ...extra }),
     });
   } catch (_) {
     throw new Error('通信できませんでした。電波の良いところでもう一度送信してください');
@@ -85,7 +118,10 @@ async function api(action, extra = {}) {
 
 function setupForm() {
   const name = (state.user && state.user.name) || state.profile.displayName;
-  $('#who').textContent = `${name} さん｜${state.canPost ? '送信するとトークにも投稿されます' : 'この画面からはトークに投稿されません（シートには保存されます）'}`;
+  $('#who').textContent = TRIAL
+    ? '試行モード｜スプレッドシートに保存します。トークへは送信後に出る文面をコピーして貼ってください'
+    : `${name} さん｜${state.canPost ? '送信するとトークにも投稿されます' : 'この画面からはトークに投稿されません（シートには保存されます）'}`;
+  $('#copyMessage').addEventListener('click', () => copyText($('#doneMessage').textContent));
 
   const saved = loadSaved();
   fillSelect($('#farm'), state.farms.map((f) => f.name), state.farms.length > 1 ? '選択してください' : null);
@@ -396,7 +432,7 @@ function toConfirm() {
   $('#preview').textContent = buildMessage(r, '送信時刻');
   $('#postNote').textContent = state.canPost
     ? '送信すると、スプレッドシートに保存し、このトークルームにあなたの名前で投稿します。'
-    : 'スプレッドシートに保存します（この画面からはトークに投稿されません）。';
+    : 'スプレッドシートに保存します。トークへは、送信後に出る文面をコピーして貼ってください。';
   $('#sendError').hidden = true;
   showView('confirm');
 }
@@ -410,23 +446,28 @@ async function send() {
   $('#sendError').hidden = true;
   try {
     const res = await api('submit', { report: { ...state.report, id: state.pendingId } });
+    // 時刻はシートに記録された送信時刻を使う
+    const message = buildMessage(state.report, res.time);
     let note = '';
+    let posted = false;
     if (res.duplicate) {
       note = 'この内容は送信済みでした（二重には保存していません）';
     } else if (state.canPost) {
       try {
-        // 時刻はシートに記録された送信時刻を使う
-        await woff.sendMessage({ content: buildMessage(state.report, res.time) });
+        await woff.sendMessage({ content: message });
+        posted = true;
         note = 'トークにも投稿しました';
       } catch (_) {
-        note = 'トークへの投稿に失敗しました（スプレッドシートには保存済みです）';
+        note = 'トークへの投稿に失敗しました。スプレッドシートには保存済みです';
       }
     } else {
-      note = 'トークには投稿していません（スマホのトークルームから開いたときだけ投稿されます）';
+      note = 'スプレッドシートに保存しました。トークへは下の文面を貼ってください';
     }
     remember(state.report);
     state.pendingId = '';
     $('#doneNote').textContent = note;
+    $('#doneMessage').textContent = message;
+    $('#copyBox').hidden = posted || res.duplicate;
     showView('done');
   } catch (e) {
     $('#sendError').textContent = `${e.message}（もう一度「送信する」を押すと、同じ内容で送り直します）`;
@@ -469,11 +510,31 @@ function showView(view) {
     back.textContent = '戻る';
     next.textContent = '送信する';
   } else {
-    back.hidden = false;
+    back.hidden = TRIAL; // 試行モードは WOFF の「閉じる」が使えない
     back.textContent = '閉じる';
     next.textContent = '続けて入力';
   }
   window.scrollTo(0, 0);
+}
+
+/** トークに貼る文面をコピーする。http の画面では clipboard API が使えないので、選択してコピーする方法に切り替える */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.append(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  const btn = $('#copyMessage');
+  btn.textContent = 'コピーしました';
+  setTimeout(() => { btn.textContent = '文面をコピー'; }, 2000);
 }
 
 /** トークに投稿する文面（スプレッドシートの保存内容とは別。読みやすさ優先） */
@@ -564,6 +625,23 @@ function today() {
 function newId() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function readStore(key) {
+  try {
+    return localStorage.getItem(key) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function writeStore(key, val) {
+  try {
+    if (val) localStorage.setItem(key, val);
+    else localStorage.removeItem(key);
+  } catch (_) {
+    // 保存できなくても入力には影響しない（次回また聞く）
+  }
 }
 
 function loadSaved() {
