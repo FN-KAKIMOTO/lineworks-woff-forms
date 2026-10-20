@@ -90,7 +90,9 @@ async function canPostToTalk() {
   const os = woff.getOS();
   if (os !== 'ios' && os !== 'android') return false;
   try {
-    return Boolean(await woff.getChannelId());
+    // 応答が返らない環境でも読み込み中で止まらないよう、3秒で諦める（そのときは文面コピーで対応）
+    const timeout = new Promise((resolve) => { setTimeout(() => resolve(''), 3000); });
+    return Boolean(await Promise.race([woff.getChannelId(), timeout]));
   } catch (_) {
     return false;
   }
