@@ -28,6 +28,7 @@ const state = {
   report: null,
   pendingId: '',
   sending: false,
+  posting: false,
 };
 
 window.addEventListener('load', () => {
@@ -163,12 +164,16 @@ function applyFarm() {
   const farm = currentFarm();
   const saved = loadSaved();
   const workers = farm ? farm.workers.map((w) => w.name) : [];
-  fillSelect($('#worker'), workers, '選択してください');
+  // 作業者は既定でボタンを押した人（LINE WORKS の氏名）。代理入力のときだけ選び直す
+  const meName = TRIAL ? '' : (state.user && state.user.name) || state.profile.displayName || '';
+  const me = normalize(meName);
+  const mine = farm && me ? farm.workers.find((w) => normalize(w.lwName) === me || normalize(w.name) === me) : null;
+  const options = meName && !mine ? [meName, ...workers] : workers;
+  fillSelect($('#worker'), options, '選択してください');
   if (farm) {
-    const me = normalize((state.user && state.user.name) || state.profile.displayName);
-    const mine = farm.workers.find((w) => normalize(w.lwName || w.name) === me);
     const last = saved.workers && saved.workers[farm.name];
     if (mine) $('#worker').value = mine.name;
+    else if (meName) $('#worker').value = meName;
     else if (workers.includes(last)) $('#worker').value = last;
   }
   $$('#calves .calf').forEach(renderPrefixes);
@@ -449,27 +454,22 @@ async function send() {
   try {
     const res = await api('submit', { report: { ...state.report, id: state.pendingId } });
     // 時刻はシートに記録された送信時刻を使う
-    const message = buildMessage(state.report, res.time);
-    let note = '';
-    let posted = false;
-    if (res.duplicate) {
-      note = 'この内容は送信済みでした（二重には保存していません）';
-    } else if (state.canPost) {
-      try {
-        await woff.sendMessage({ content: message });
-        posted = true;
-        note = 'トークにも投稿しました';
-      } catch (_) {
-        note = 'トークへの投稿に失敗しました。スプレッドシートには保存済みです';
-      }
-    } else {
-      note = 'スプレッドシートに保存しました。トークへは下の文面を貼ってください';
-    }
-    remember(state.report);
+    const report = state.report;
+    const message = buildMessage(report, res.time);
+    remember(report);
     state.pendingId = '';
-    $('#doneNote').textContent = note;
     $('#doneMessage').textContent = message;
-    $('#copyBox').hidden = posted || res.duplicate;
+    $('#copyBox').hidden = true;
+    if (res.duplicate) {
+      $('#doneNote').textContent = 'この内容は送信済みでした（二重には保存していません）';
+    } else if (state.canPost) {
+      // 保存できた時点で完了画面を出し、トークへの投稿はその後に続ける
+      $('#doneNote').textContent = 'スプレッドシートに保存しました。トークに投稿しています…';
+      postToTalk(report, res.time, message);
+    } else {
+      $('#doneNote').textContent = 'スプレッドシートに保存しました。トークへは下の文面を貼ってください';
+      $('#copyBox').hidden = false;
+    }
     showView('done');
   } catch (e) {
     $('#sendError').textContent = `${e.message}（もう一度「送信する」を押すと、同じ内容で送り直します）`;
@@ -477,8 +477,25 @@ async function send() {
   } finally {
     state.sending = false;
     $('#next').disabled = false;
-    $('#back').disabled = false;
+    if (!state.posting) $('#back').disabled = false;
     if (state.view === 'confirm') $('#next').textContent = '送信する';
+  }
+}
+
+/** トークに投稿する。見やすいカードで送り、カードが送れない環境ではテキストで送る */
+async function postToTalk(report, time, message) {
+  state.posting = true;
+  $('#back').disabled = true; // 投稿が終わる前に「閉じる」と投稿が止まるため
+  try {
+    await woff.sendFlexMessage({ flex: buildFlex(report, time) })
+      .catch(() => woff.sendMessage({ content: message }));
+    $('#doneNote').textContent = 'スプレッドシートに保存し、トークにも投稿しました';
+  } catch (_) {
+    $('#doneNote').textContent = 'トークへの投稿に失敗しました（スプレッドシートには保存済み）。下の文面を貼ってください';
+    $('#copyBox').hidden = false;
+  } finally {
+    state.posting = false;
+    $('#back').disabled = false;
   }
 }
 
@@ -540,24 +557,82 @@ async function copyText(text) {
 }
 
 /** トークに投稿する文面（スプレッドシートの保存内容とは別。読みやすさ優先） */
-function buildMessage(r, time) {
-  const dam = r.damTag && r.damId ? `${r.damTag}（${r.damId}）` : r.damTag || r.damId;
-  const head = r.kind === '出産' ? '分娩' : r.kind;
-  const lines = [`【${head}】${r.farm} ${dam}`];
-  const when = time ? ` ${r.timeKind === 'birth' ? '分娩' : '子牛発見'} ${time}` : '';
-  lines.push(`${r.date.replace(/-/g, '/')}${when}${r.difficulty ? `／${r.difficulty}` : ''}`);
+/** 投稿の見出しと「項目：内容」の行。テキストとカードの両方で使う */
+function reportRows(r, time) {
+  const oneLine = (s) => s.replace(/\s*\n\s*/g, ' ');
+  const [, m, d] = r.date.split('-').map(Number);
+  const when = `${m}月${d}日 ${time || ''}`.trim();
+  const rows = [
+    ['母牛', r.damTag && r.damId ? `${r.damTag}（${r.damId}）` : r.damTag || r.damId],
+    ['日時', `${when}（${r.timeKind === 'birth' ? '分娩に立ち会い' : '子牛を発見'}）`],
+    ['分類', [r.kind, r.difficulty].filter(Boolean).join('・')],
+  ];
   const calves = r.calves.filter((c) => r.kind === '出産' || hasCalfInfo(c));
   calves.forEach((c, i) => {
-    const label = calves.length > 1 ? `子牛${i + 1}` : '子牛';
-    const nums = c.id ? `${c.tag || c.id.slice(5, 9)}（${fmtCalfId(c.id)}）` : c.tag || (c.noId ? '耳標未装着' : '番号未記入');
+    const no = calves.length > 1 ? String(i + 1) : '';
     const weight = c.weight ? `${c.weight}kg` : c.noWeight ? '体重未測定' : '';
-    const parts = [c.sex, c.breed, weight].filter(Boolean).join(' ');
-    lines.push(`${label}: ${parts}　${nums}`);
-    if (c.memo) lines.push(`　${c.memo.replace(/\s*\n\s*/g, ' ')}`);
+    rows.push([`子牛${no}`, [c.sex, c.breed, weight].filter(Boolean).join('・')]);
+    rows.push([`耳標${no}`, c.id ? `${c.tag || c.id.slice(5, 9)}（${fmtCalfId(c.id)}）` : c.tag || (c.noId ? '未装着' : '未記入')]);
+    if (c.memo) rows.push([`出生メモ${no}`, oneLine(c.memo)]);
   });
-  if (r.memo) lines.push(`メモ: ${r.memo.replace(/\s*\n\s*/g, ' ')}`);
-  lines.push(`作業者: ${r.worker}`);
-  return lines.join('\n');
+  if (r.memo) rows.push(['メモ', oneLine(r.memo)]);
+  rows.push(['作業者', r.worker]);
+  const title = r.kind === '出産' ? '分娩報告' : `${r.kind}の報告`;
+  return { title, rows };
+}
+
+/** トークに投稿する文面（カードを送れないときと、コピーして貼るとき用） */
+function buildMessage(r, time) {
+  const { title, rows } = reportRows(r, time);
+  return [`【${title}】${r.farm}`, ...rows.map(([label, value]) => `${label}：${value}`)].join('\n');
+}
+
+/** トークに投稿するカード（Flexible Template）。下に次の報告を開く大きいボタンを付ける */
+function buildFlex(r, time) {
+  const { title, rows } = reportRows(r, time);
+  const headColor = r.kind === '出産' ? '#2f7d4f' : '#7a5c2e';
+  return {
+    type: 'flex',
+    altText: buildMessage(r, time).slice(0, 400),
+    contents: {
+      type: 'bubble',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: headColor,
+        paddingAll: '14px',
+        contents: [
+          { type: 'text', text: title, color: '#ffffff', weight: 'bold', size: 'xl' },
+          { type: 'text', text: r.farm, color: '#ffffff', size: 'sm' },
+        ],
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'md',
+        contents: rows.map(([label, value]) => ({
+          type: 'box',
+          layout: 'horizontal',
+          spacing: 'md',
+          contents: [
+            { type: 'text', text: label, size: 'md', color: '#646b62', flex: 2 },
+            { type: 'text', text: value || '－', size: 'md', color: '#1d211c', weight: 'bold', flex: 5, wrap: true },
+          ],
+        })),
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        contents: [{
+          type: 'button',
+          style: 'primary',
+          color: '#2f7d4f',
+          height: 'md',
+          action: { type: 'uri', label: '＋ 分娩を報告する', uri: `https://woff.worksmobile.com/woff/${CONFIG.woffId}` },
+        }],
+      },
+    },
+  };
 }
 
 // ---------- 小物 ----------
