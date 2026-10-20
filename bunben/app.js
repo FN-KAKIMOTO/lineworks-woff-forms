@@ -172,6 +172,7 @@ function setupForm() {
   $('#date').value = today();
   $('#date').max = today();
   $('#damTag').addEventListener('input', showDamHits);
+  fixTagOnBlur($('#damTag'));
   $('#damId').addEventListener('input', onDamId);
   $('#next').addEventListener('click', onNext);
   $('#back').addEventListener('click', onBack);
@@ -337,6 +338,7 @@ function addMove() {
   const tagEl = $('.m-tag', node);
   const idEl = $('.m-id', node);
   tagEl.addEventListener('input', () => cowHits(tagEl, idEl, $('.m-hits', node)));
+  fixTagOnBlur(tagEl);
   idEl.addEventListener('input', () => fillTagFromId(idEl, tagEl));
   $('.remove', node).addEventListener('click', () => {
     node.remove();
@@ -511,7 +513,7 @@ function collect() {
   const base = {
     activity: ACTIVITY,
     farm: $('#farm').value,
-    damTag: $('#damTag').value.trim(),
+    damTag: fixTag($('#damTag').value),
     damId: $('#damId').value.trim(),
     date: $('#date').value,
     worker: $('#worker').value,
@@ -538,7 +540,7 @@ function collect() {
       damId: '',
       memo: $('#iMemo').value.trim(),
       moves: $$('#moves .move').map((node) => ({
-        tag: $('.m-tag', node).value.trim(),
+        tag: fixTag($('.m-tag', node).value),
         id: $('.m-id', node).value.trim(),
         herd: node.dataset.herd,
         dir: node.dataset.herd ? node.dataset.group : '', // トークに出す移動の向き（シートには保存しない）
@@ -977,9 +979,25 @@ function toDigits(s) {
   return String(s).replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0)).replace(/\D/g, '');
 }
 
-/** 検索用: 全角英数→半角、空白除去、小文字化 */
+/**
+ * 耳標の表記をそろえる: ひらがな→カタカナ（「ね777」→「ネ777」。Farmnote の耳標はカタカナ）、全角英数→半角、前後の空白を除く。
+ * 入力中（IME の変換中）に書き換えると入力が崩れるので、欄から離れたときと送信のときだけ使う
+ */
+function fixTag(s) {
+  return String(s || '')
+    .replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60))
+    .replace(/[０-９Ａ-Ｚａ-ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .trim();
+}
+
+function fixTagOnBlur(el) {
+  el.addEventListener('change', () => { el.value = fixTag(el.value); });
+}
+
+/** 検索用: ひらがな→カタカナ、全角英数→半角、空白除去、小文字化 */
 function normalize(s) {
   return String(s || '')
+    .replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60))
     .replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
     .replace(/\s+/g, '')
     .toLowerCase();
