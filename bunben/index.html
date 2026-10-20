@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>分娩記録</title>
+<style>
+  :root {
+    --bg: #f3f4f1;
+    --card: #ffffff;
+    --text: #1d211c;
+    --muted: #646b62;
+    --line: #d9ddd6;
+    --accent: #2f7d4f;
+    --accent-weak: #e3f1e8;
+    --danger: #b3261e;
+    --danger-weak: #fbe9e7;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141714;
+      --card: #1e221e;
+      --text: #e8ebe6;
+      --muted: #9aa297;
+      --line: #343a33;
+      --accent: #5dbb83;
+      --accent-weak: #1f3527;
+      --danger: #f2b8b5;
+      --danger-weak: #3a1f1d;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
+  }
+  [hidden] { display: none !important; }
+  .bar {
+    position: sticky; top: 0; z-index: 5; background: var(--bg);
+    padding: 12px 16px 8px; border-bottom: 1px solid var(--line);
+  }
+  .bar h1 { margin: 0; font-size: 18px; }
+  .who { color: var(--muted); font-size: 13px; }
+  main { padding: 12px 16px; max-width: 560px; margin: 0 auto; }
+  .card { background: var(--card); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; border: 1px solid var(--line); }
+  .card h2 { margin: 0 0 10px; font-size: 15px; }
+  .field { display: block; margin-bottom: 12px; }
+  .field:last-child { margin-bottom: 0; }
+  .field > span, .label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .req::after { content: " *"; color: var(--danger); }
+  input, select, textarea {
+    width: 100%; font: inherit; color: var(--text); background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-height: 44px;
+  }
+  textarea { resize: vertical; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .invalid { border-color: var(--danger) !important; background: var(--danger-weak); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .row-time { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; }
+  .hint { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg label { flex: 1 1 auto; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg span {
+    display: block; text-align: center; padding: 10px 8px; min-height: 44px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--card); font-size: 15px; white-space: nowrap;
+  }
+  .seg input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .seg.invalid span { border-color: var(--danger); }
+  .seg.invalid { background: none; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .chips:empty { display: none; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 14px; color: var(--muted); min-height: 32px; }
+  .check input { width: 20px; height: 20px; min-height: 0; margin: 0; accent-color: var(--accent); }
+  input:disabled { opacity: .5; }
+  .chip {
+    font: inherit; font-size: 14px; padding: 6px 10px; border-radius: 999px; min-height: 36px;
+    border: 1px solid var(--line); background: var(--accent-weak); color: var(--text);
+  }
+  .calf-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .calf-head h2 { margin: 0; }
+  .calf .note { margin: -4px 0 10px; font-size: 12px; color: var(--muted); }
+  .link { font: inherit; font-size: 14px; background: none; border: none; color: var(--danger); padding: 6px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 14px; padding: 4px 0 8px; }
+  button.ghost {
+    width: 100%; font: inherit; padding: 12px; min-height: 48px; border-radius: var(--radius);
+    border: 1px dashed var(--accent); background: transparent; color: var(--accent); margin-bottom: 12px;
+  }
+  button.small { font: inherit; font-size: 14px; padding: 0 14px; min-height: 44px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  .errors { color: var(--danger); background: var(--danger-weak); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; font-size: 14px; }
+  .errors ul { margin: 0; padding-left: 18px; }
+  .footer {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--bg);
+    border-top: 1px solid var(--line); padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  .footer .inner { max-width: 560px; margin: 0 auto; display: flex; gap: 8px; }
+  button.primary {
+    flex: 1; font: inherit; font-weight: 600; padding: 12px; min-height: 52px; border-radius: var(--radius);
+    border: none; background: var(--accent); color: #fff;
+  }
+  button.secondary {
+    flex: 0 0 auto; font: inherit; padding: 12px 18px; min-height: 52px; border-radius: var(--radius);
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+  }
+  button:disabled { opacity: .6; }
+  .preview { white-space: pre-wrap; font-size: 15px; margin: 0; }
+  .status { text-align: center; padding: 48px 16px; color: var(--muted); }
+  .done-mark { font-size: 40px; color: var(--accent); }
+  .notice { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1 id="title">分娩記録</h1>
+  <div id="who" class="who"></div>
+</header>
+
+<main>
+  <div id="loading" class="status">読み込み中…</div>
+  <div id="fatal" class="status" hidden></div>
+
+  <form id="form" novalidate hidden>
+    <section class="card" id="farmCard">
+      <label class="field"><span class="req">牧場</span><select id="farm"></select></label>
+    </section>
+
+    <section class="card">
+      <h2>母牛</h2>
+      <label class="field"><span>耳標</span>
+        <input id="damTag" autocomplete="off" placeholder="例: ネ146（数字だけでも検索）">
+      </label>
+      <div id="damHits" class="chips"></div>
+      <label class="field" style="margin-top:12px"><span>個体識別番号（10桁）</span>
+        <input id="damId" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="例: 1234567890">
+      </label>
+      <p class="hint">耳標か個体識別番号のどちらか一方でOK</p>
+    </section>
+
+    <section class="card">
+      <h2>分娩</h2>
+      <div class="row2">
+        <label class="field"><span class="req">分娩日</span><input id="date" type="date"></label>
+        <label class="field"><span class="req">作業者</span><select id="worker"></select></label>
+      </div>
+      <div class="field"><span class="label req">分類</span><div id="kind" class="seg"></div></div>
+      <div class="field"><span class="label" id="difficultyLabel">分娩難易</span><div id="difficulty" class="seg"></div></div>
+      <div class="field"><span class="label req">時刻の種類</span>
+        <div id="timeKind" class="seg"></div>
+        <p class="hint">時刻は送信した時刻が入ります（分娩日が今日のとき）</p>
+      </div>
+      <label class="field"><span>メモ</span><textarea id="memo" rows="2" placeholder="例: 281日 和牛"></textarea></label>
+    </section>
+
+    <div id="calves"></div>
+    <button type="button" id="addCalf" class="ghost">＋ 子牛を追加（双子）</button>
+
+    <div id="errors" class="errors" role="alert" hidden></div>
+  </form>
+
+  <section id="confirm" hidden>
+    <div class="card">
+      <h2>この内容で送信します</h2>
+      <p id="preview" class="preview"></p>
+      <p id="postNote" class="notice"></p>
+    </div>
+    <div id="sendError" class="errors" role="alert" hidden></div>
+  </section>
+
+  <section id="done" class="status" hidden>
+    <div class="done-mark">✓</div>
+    <p id="doneText" style="color:var(--text);font-weight:600;margin:8px 0 0">保存しました</p>
+    <p id="doneNote" class="notice"></p>
+  </section>
+</main>
+
+<footer class="footer" id="footer" hidden>
+  <div class="inner">
+    <button type="button" id="back" class="secondary" hidden>戻る</button>
+    <button type="button" id="next" class="primary">確認する</button>
+  </div>
+</footer>
+
+<template id="calfTpl">
+  <section class="card calf">
+    <div class="calf-head"><h2>子牛<span class="no"></span></h2><button type="button" class="link remove">削除</button></div>
+    <p class="note" hidden>死産・流産のときは、わかる範囲で入れてください（空欄でも可）</p>
+    <div class="field"><label><span class="label c-req">個体識別番号（10桁）</span>
+      <input class="c-id" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="例: 1417567193">
+    </label>
+      <div class="chips c-prefixes"></div>
+      <label class="check c-only-birth"><input type="checkbox" class="c-noid"> 耳標をまだ付けていない</label>
+    </div>
+    <label class="field"><span>自家耳標番号</span><input class="c-tag" autocomplete="off" placeholder="個体識別番号から自動で入ります"></label>
+    <div class="field"><span class="label c-req">性別</span><div class="seg c-sex"></div></div>
+    <label class="field"><span class="c-req">品種</span><select class="c-breed"></select></label>
+    <div class="field"><span class="label c-req">タイプ</span><div class="seg c-type"></div></div>
+    <div class="row2">
+      <div class="field"><label><span class="label c-req">出生時体重（kg）</span>
+        <input class="c-weight" type="number" inputmode="decimal" min="1" max="99" step="0.1"></label>
+        <label class="check c-only-birth"><input type="checkbox" class="c-noweight"> 測れなかった</label>
+      </div>
+      <label class="field"><span>毛色</span><select class="c-color"></select></label>
+    </div>
+    <details>
+      <summary>名前・出生メモ</summary>
+      <label class="field"><span>名前</span><input class="c-name" autocomplete="off"></label>
+      <label class="field"><span>出生メモ</span><textarea class="c-memo" rows="2"></textarea></label>
+    </details>
+  </section>
+</template>
+
+<script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
