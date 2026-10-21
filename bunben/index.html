@@ -81,7 +81,21 @@
   .m-cow .chips { margin: -2px 0 8px; }
   .cow-row select { flex: 1; min-width: 0; }
   .drug { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
-  .drug-row { display: grid; grid-template-columns: 1fr 72px 1.4fr; gap: 8px; }
+  .drug-row { display: flex; gap: 8px; align-items: center; }
+  .drug-row .d-qty { flex: 0 0 110px; }
+  .drug-row .d-unit { flex: 0 0 72px; }
+  .drug-row .d-unit-label { font-size: 17px; min-width: 24px; }
+  .drug-row .d-route { flex: 1; min-width: 0; }
+  .d-route-label {
+    margin-left: auto; font: inherit; font-size: 15px; color: var(--muted); background: none;
+    border: 1px dashed var(--line); border-radius: 999px; padding: 8px 12px; min-height: 44px;
+  }
+  .preset-btn {
+    display: block; width: 100%; text-align: left; white-space: normal; font: inherit; font-size: 16px; line-height: 1.4;
+    padding: 12px 14px; min-height: 56px; margin-bottom: 8px; border-radius: 10px;
+    border: 2px solid var(--line); background: var(--card); color: var(--text);
+  }
+  .preset-btn.on { border-color: var(--accent); background: var(--accent-weak); font-weight: 600; }
   .chooser-btn { display: block; width: 100%; margin-bottom: 12px; text-align: left; padding: 18px 16px; }
   .chooser-btn small { display: block; font-size: 13px; font-weight: 400; opacity: .9; }
   .step-group { font-size: 13px; color: var(--muted); margin: 10px 0 6px; }
@@ -242,22 +256,25 @@
     <!-- 治療（アブレスト以外） -->
     <div id="chiryouFields" hidden>
       <section class="card">
-        <h2>治療</h2>
         <div class="field"><span class="label req">治療区分</span><div id="cKubun" class="seg"></div></div>
-        <label class="field"><span>疾病名</span><select id="cDisease"></select></label>
-        <label class="field" id="cDiseaseOtherField" hidden><span class="req">疾病名（入力）</span>
-          <input id="cDiseaseOther" autocomplete="off" placeholder="例: 足の切り傷"></label>
+        <div class="field" id="cPresetBox"><span class="label">いつもの組み合わせ（押すと薬と量が入ります）</span><div id="cPresets"></div></div>
       </section>
       <section class="card">
         <h2>薬</h2>
         <div id="drugList"></div>
         <button type="button" id="addDrug" class="small" style="width:100%">＋ 薬を追加</button>
       </section>
-      <section class="card">
+      <!-- 疾病名・体温・ステータスは治療区分「治療」のときだけ（ワクチン・予防的投与・繁殖治療ではほぼ入れていない） -->
+      <section class="card" id="cDetail">
+        <label class="field"><span>疾病名</span><select id="cDisease"></select></label>
+        <label class="field" id="cDiseaseOtherField" hidden><span class="req">疾病名（入力）</span>
+          <input id="cDiseaseOther" autocomplete="off" placeholder="例: 足の切り傷"></label>
         <label class="field"><span>体温（℃）</span>
           <input id="cTemp" type="number" inputmode="decimal" min="35" max="43" step="0.1" placeholder="測ったときだけ"></label>
         <div class="field"><span class="label">ステータス</span><div id="cStatus" class="seg"></div></div>
-        <label class="field"><span>メモ</span><textarea id="cMemo" rows="2" placeholder="例: 左前PL+ 肉休薬9/28まで"></textarea></label>
+      </section>
+      <section class="card">
+        <label class="field"><span>メモ</span><textarea id="cMemo" rows="1" placeholder="例: 左前PL+ 肉休薬9/28まで"></textarea></label>
       </section>
     </div>
 
@@ -370,10 +387,13 @@
       <button type="button" class="small d-del" aria-label="この薬を外す">✕</button>
     </div>
     <input class="d-other" autocomplete="off" placeholder="薬の名前（Farmnote の表記）" hidden style="margin-bottom:8px">
+    <!-- 量だけ入れる。単位と投薬区分は「薬」タブから入り、文字で出す（その他の薬・押したときだけ変えられる） -->
     <div class="drug-row">
       <input class="d-qty" type="number" inputmode="decimal" min="0" step="any" placeholder="量">
-      <input class="d-unit" autocomplete="off" placeholder="単位">
-      <select class="d-route"></select>
+      <span class="d-unit-label"></span>
+      <input class="d-unit" autocomplete="off" placeholder="単位" hidden>
+      <button type="button" class="d-route-label"></button>
+      <select class="d-route" hidden></select>
     </div>
   </div>
 </template>

@@ -53,6 +53,7 @@ const state = {
   drugs: [],
   sairanSteps: [],
   links: [],
+  presets: [],
   canPost: false,
   trialKey: '',
   view: 'form',
@@ -100,6 +101,7 @@ async function start() {
   state.drugs = res.drugs || [];
   state.sairanSteps = res.sairanSteps || [];
   state.links = res.links || [];
+  state.presets = res.presets || [];
   if (!state.farms.length) throw new Error('設定シート「牧場」に牧場がありません');
   $('#loading').hidden = true;
   if (PARAMS.get('admin') === 'menu' && state.user.isAdmin) setupAdmin();
@@ -272,8 +274,15 @@ function isMultiCow() {
   return ACTIVITY === 'chiryou' || ACTIVITY === 'sairan';
 }
 
+/**
+ * 治療: 治療区分は前回と同じものを選んでおく。区分を選ぶと、いつもの組み合わせ（押すと薬と量が入る）と薬の候補をその区分のものに絞る。
+ * 疾病名・体温・ステータスは区分が「治療」のときだけ出す
+ */
 function setupChiryou() {
-  segment($('#cKubun'), 'cKubun', state.choices.chiryouKubun, state.choices.chiryouKubun[0]);
+  const kubuns = state.choices.chiryouKubun;
+  const last = loadSaved().chiryouKubun;
+  segment($('#cKubun'), 'cKubun', kubuns, kubuns.includes(last) ? last : kubuns[0]);
+  $$('#cKubun input').forEach((el) => el.addEventListener('change', applyKubun));
   fillSelect($('#cDisease'), state.diseases, 'なし（入れない）');
   $('#cDisease').append(new Option('その他（入力）', OTHER));
   $('#cDisease').addEventListener('change', () => {
@@ -281,26 +290,82 @@ function setupChiryou() {
   });
   segment($('#cStatus'), 'cStatus', state.choices.status, '');
   $('#addDrug').addEventListener('click', () => addDrug());
+  applyKubun();
+}
+
+/** 治療区分が変わったとき: いつもの組み合わせ・薬の候補・詳しい項目を出し直す（薬は空の1行に戻す） */
+function applyKubun() {
+  const kubun = value('cKubun');
+  $('#cDetail').hidden = kubun !== '治療';
+  const box = $('#cPresets');
+  box.textContent = '';
+  const presets = (state.presets || []).filter((p) => p.kubun === kubun);
+  $('#cPresetBox').hidden = !presets.length;
+  presets.forEach((p) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'preset-btn';
+    b.textContent = p.label;
+    b.addEventListener('click', () => {
+      $$('.preset-btn', box).forEach((x) => x.classList.toggle('on', x === b));
+      $('#drugList').textContent = '';
+      p.drugs.forEach((d) => addDrug(d));
+      state.pendingId = '';
+    });
+    box.append(b);
+  });
+  $('#drugList').textContent = '';
   addDrug();
 }
 
-/** 薬の1行: 「薬」タブから選ぶと、いつもの量・単位・投薬区分が入る。無い薬は「その他（入力）」 */
-function addDrug() {
+/** 治療区分で絞った薬の候補（「薬」タブの治療区分の列が空の薬はどの区分でも出す） */
+function drugsForKubun() {
+  const kubun = value('cKubun');
+  return state.drugs.filter((d) => !d.kubun || !d.kubun.length || d.kubun.includes(kubun));
+}
+
+/**
+ * 薬の1行: 薬を選ぶと、いつもの量・単位・投薬区分が入る。単位と投薬区分は文字で出し、投薬区分は押すと選び直せる。
+ * 無い薬は「その他（入力）」で名前・単位・投薬区分を入れる。preset（いつもの組み合わせの薬）があればそれで埋める
+ */
+function addDrug(preset) {
   const list = $('#drugList');
   if (list.children.length >= MAX_DRUGS) return;
   const node = $('#drugTpl').content.firstElementChild.cloneNode(true);
   const nameEl = $('.d-name', node);
-  fillSelect(nameEl, state.drugs.map((d) => d.name), '薬を選ぶ');
+  const names = drugsForKubun().map((d) => d.name);
+  if (preset && !names.includes(preset.name)) names.push(preset.name);
+  fillSelect(nameEl, names, '薬を選ぶ');
   nameEl.append(new Option('その他（入力）', OTHER));
   fillSelect($('.d-route', node), state.choices.route, '投薬区分');
+  const routeSel = $('.d-route', node);
+  const routeBtn = $('.d-route-label', node);
+  const setUnit = (unit) => {
+    $('.d-unit', node).value = unit;
+    $('.d-unit-label', node).textContent = unit;
+  };
+  const setRoute = (route) => {
+    routeSel.value = state.choices.route.includes(route) ? route : '';
+    routeBtn.textContent = routeSel.value || '投薬区分';
+  };
+  routeBtn.addEventListener('click', () => {
+    routeBtn.hidden = true;
+    routeSel.hidden = false;
+    routeSel.focus();
+  });
+  routeSel.addEventListener('change', () => setRoute(routeSel.value));
   nameEl.addEventListener('change', () => {
-    $('.d-other', node).hidden = nameEl.value !== OTHER;
+    const other = nameEl.value === OTHER;
+    $('.d-other', node).hidden = !other;
+    // その他の薬は単位と投薬区分をその場で入れる
+    $('.d-unit', node).hidden = !other;
+    $('.d-unit-label', node).hidden = other;
+    routeSel.hidden = !other;
+    routeBtn.hidden = other;
     const d = state.drugs.find((x) => x.name === nameEl.value);
-    if (d) {
-      $('.d-qty', node).value = d.qty;
-      $('.d-unit', node).value = d.unit;
-      $('.d-route', node).value = state.choices.route.includes(d.route) ? d.route : '';
-    }
+    $('.d-qty', node).value = d ? d.qty : '';
+    setUnit(d ? d.unit : '');
+    setRoute(d ? d.route : '');
   });
   $('.d-del', node).addEventListener('click', () => {
     node.remove();
@@ -308,6 +373,16 @@ function addDrug() {
     state.pendingId = '';
   });
   list.append(node);
+  if (preset) {
+    nameEl.value = preset.name;
+    nameEl.dispatchEvent(new Event('change'));
+    const m = String(preset.qty || '').match(/^([\d.]+)\s*(.*)$/);
+    $('.d-qty', node).value = m ? m[1] : '';
+    if (m && m[2]) setUnit(m[2]);
+    if (preset.route) setRoute(preset.route);
+  } else {
+    setRoute('');
+  }
   renumberDrugs();
 }
 
@@ -809,15 +884,17 @@ function collect() {
     };
   }
   if (ACTIVITY === 'chiryou') {
+    const detail = value('cKubun') === '治療';
     return {
       ...base,
       damTag: '',
       damId: '',
       cows: $$('#cowList .m-cow').map(readCowRow).filter(Boolean),
       kubun: value('cKubun'),
-      disease: $('#cDisease').value === OTHER ? $('#cDiseaseOther').value.trim() : $('#cDisease').value,
-      temp: $('#cTemp').value.trim(),
-      status: value('cStatus'),
+      // 疾病名・体温・ステータスは「治療」のときだけ（ほかの区分では隠れているので送らない）
+      disease: !detail ? '' : $('#cDisease').value === OTHER ? $('#cDiseaseOther').value.trim() : $('#cDisease').value,
+      temp: detail ? $('#cTemp').value.trim() : '',
+      status: detail ? value('cStatus') : '',
       drugs: $$('#drugList .drug').map((n) => ({
         name: $('.d-name', n).value === OTHER ? $('.d-other', n).value.trim() : $('.d-name', n).value,
         qty: $('.d-qty', n).value.trim(),
@@ -930,7 +1007,7 @@ function validateMoves(r, bad) {
 function validateChiryou(r, bad) {
   checkCowRows($$('#cowList .m-cow'), bad, new Set(), '');
   if (!r.kubun) bad($('#cKubun'), '治療区分を選んでください');
-  if ($('#cDisease').value === OTHER && !r.disease) bad($('#cDiseaseOther'), '疾病名を入れてください（無ければ「なし」）');
+  if (r.kubun === '治療' && $('#cDisease').value === OTHER && !r.disease) bad($('#cDiseaseOther'), '疾病名を入れてください（無ければ「なし」）');
   const nodes = $$('#drugList .drug');
   if (!r.drugs.length) bad($('.d-name', nodes[0]), '薬を選んでください');
   nodes.forEach((n, i) => {
@@ -1384,6 +1461,7 @@ function remember(r) {
     const saved = loadSaved();
     saved.farm = r.farm;
     saved.workers = { ...(saved.workers || {}), [r.farm]: r.worker };
+    if (r.activity === 'chiryou') saved.chiryouKubun = r.kubun; // 次に開いたとき同じ治療区分を選んでおく
     localStorage.setItem(STORE_KEY, JSON.stringify(saved));
   } catch (_) {
     // 保存できなくても入力には影響しない
