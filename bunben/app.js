@@ -6,6 +6,10 @@ const CONFIG = {
   gasUrl: 'https://script.google.com/macros/s/AKfycbxeEl4u7byBq21WFH3mvap8JZ-HnzlqYByUhncD_jDPivvF98okpf0PI487SNvMh7Rcow/exec',
 };
 
+// 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
+// index.html の app.js?v=… も同じ値にそろえる（古いファイルを使い回させないため）
+const APP_VERSION = '2026-10-21b';
+
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
 // 試行モード（?trial=1）: WOFF を使わずブラウザで開く。キー（GAS の TRIAL_KEY）は初回に貼り付けてもらい、その端末に保存する
@@ -207,7 +211,7 @@ async function api(action, extra = {}) {
     const auth = TRIAL ? { trialKey: state.trialKey } : { token: state.token, userId: state.profile.userId };
     res = await fetch(CONFIG.gasUrl, {
       method: 'POST',
-      body: JSON.stringify({ action, ...auth, ...extra }),
+      body: JSON.stringify({ action, v: APP_VERSION, ...auth, ...extra }),
     });
   } catch (_) {
     throw new Error('通信できませんでした。電波の良いところでもう一度送信してください');
@@ -1099,6 +1103,8 @@ async function send() {
     state.pendingId = '';
     $('#doneMessage').textContent = message;
     $('#copyBox').hidden = true;
+    // 二重送信（何も保存していない）のときは「保存しました」と出さない
+    $('#doneText').textContent = res.duplicate ? '送信済みでした' : `保存しました（${res.rows}行）`;
     if (res.duplicate) {
       $('#doneNote').textContent = 'この内容は送信済みでした（二重には保存していません）';
     } else if (state.canPost) {
