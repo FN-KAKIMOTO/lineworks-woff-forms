@@ -318,10 +318,26 @@ function applyKubun() {
   addDrug();
 }
 
-/** 治療区分で絞った薬の候補（「薬」タブの治療区分の列が空の薬はどの区分でも出す） */
+/**
+ * 治療区分で絞った薬の候補。「薬」タブは区分ごとに使われやすい順に並んでいるので、その順のまま出す
+ * （治療区分の列が空の薬はどの区分でも出す）
+ */
 function drugsForKubun() {
   const kubun = value('cKubun');
-  return state.drugs.filter((d) => !d.kubun || !d.kubun.length || d.kubun.includes(kubun));
+  const seen = new Set();
+  return state.drugs.filter((d) => {
+    if (d.kubun && d.kubun.length && !d.kubun.includes(kubun)) return false;
+    if (seen.has(d.name)) return false;
+    seen.add(d.name);
+    return true;
+  });
+}
+
+/** 薬の行（いつもの量・単位・投薬区分）。同じ薬でも区分で量が違うことがあるので、選んでいる区分の行を先に見る */
+function findDrug(name) {
+  const kubun = value('cKubun');
+  return state.drugs.find((x) => x.name === name && (x.kubun || []).includes(kubun))
+    || state.drugs.find((x) => x.name === name);
 }
 
 /**
@@ -362,7 +378,7 @@ function addDrug(preset) {
     $('.d-unit-label', node).hidden = other;
     routeSel.hidden = !other;
     routeBtn.hidden = other;
-    const d = state.drugs.find((x) => x.name === nameEl.value);
+    const d = findDrug(nameEl.value);
     $('.d-qty', node).value = d ? d.qty : '';
     setUnit(d ? d.unit : '');
     setRoute(d ? d.route : '');
