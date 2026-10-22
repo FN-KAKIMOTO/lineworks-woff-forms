@@ -63,6 +63,11 @@
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .row-time { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; }
   .hint { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+  /* 子牛の個体識別番号: 頭5桁（持ち主で決まる）・真ん中の4桁（入れる）・最後の1桁（計算） */
+  .id-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .id-row .c-mid { flex: 1 1 auto; min-width: 0; font-size: 22px; letter-spacing: 0.15em; text-align: center; }
+  .id-part { flex: 0 0 auto; font-size: 20px; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .c-id-full.bad { color: var(--danger); }
   .seg { display: flex; flex-wrap: wrap; gap: 6px; }
   .seg label { flex: 1 1 auto; position: relative; }
   /* 見えないラジオボタン。幅を持たせると画面の外にはみ出して横スクロールが出るので 1px にする */
@@ -444,10 +449,16 @@
   <section class="card calf">
     <div class="calf-head"><h2>子牛<span class="no"></span></h2><button type="button" class="link remove">削除</button></div>
     <p class="note" hidden>死産・流産のときは、わかる範囲で入れてください（空欄でも可）</p>
-    <div class="field"><label><span class="label c-req">個体識別番号（10桁）</span>
-      <input class="c-id" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="例: 1417567193">
-    </label>
-      <div class="chips c-prefixes"></div>
+    <div class="field"><span class="label c-req">個体識別番号（真ん中の4桁）</span>
+      <div class="seg c-owner"></div>
+      <p class="hint c-owner-hint" hidden></p>
+      <div class="id-row">
+        <span class="id-part c-pre">-----</span>
+        <input class="c-mid" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="4桁" aria-label="個体識別番号の真ん中の4桁">
+        <span class="id-part c-cd">-</span>
+      </div>
+      <p class="hint c-id-full">希望かDPかを選び、真ん中の4桁を入れてください。頭の5桁と最後の1桁は自動で入ります（10桁をそのまま入れても大丈夫です）</p>
+      <input type="hidden" class="c-id">
       <label class="check c-only-birth"><input type="checkbox" class="c-noid"> 耳標をまだ付けていない</label>
     </div>
     <label class="field"><span>自家耳標番号</span><input class="c-tag" autocomplete="off" placeholder="個体識別番号から自動で入ります"></label>
@@ -527,6 +538,6 @@
 
 <script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>
 <!-- ?v= は app.js の APP_VERSION と同じ値にする（スマホが古い app.js を使い回さないように） -->
-<script src="app.js?v=2026-10-22d"></script>
+<script src="app.js?v=2026-10-22e"></script>
 </body>
 </html>

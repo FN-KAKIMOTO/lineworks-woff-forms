@@ -8,7 +8,7 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // index.html の app.js?v=… も同じ値にそろえる（古いファイルを使い回させないため）
-const APP_VERSION = '2026-10-22d';
+const APP_VERSION = '2026-10-22e';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
@@ -20,9 +20,9 @@ const TRIAL = PARAMS.has('trial');
 // say: 話す順（声の入力の型）。一部だけ話して、残りをタップ・文字で入れてもよい
 const ACTIVITY_INFO = {
   bunben: { title: '分娩の報告', cow: '母牛', date: '分娩日', color: '#2f7d4f', farmnote: true, cowCard: true,
-    example: '例「ネの527番、出産、自然分娩。メス、ホルスタイン、40キロ。ニュートレス500、メロキシリン5」',
+    example: '例「ネの527番、出産、自然分娩。メス、ホルスタイン、40キロ、番号は6720。ニュートレス500、メロキシリン5」',
     say: ['母牛の番号（ネの527番）', '出産・死産・流産', '分娩難易（自然分娩・介助）', '生まれていた か 立ち会った か',
-      '子牛の性別・品種・体重（メス、ホルスタイン、40キロ）', '子牛の個体識別番号（わかれば）', '母牛に入れた薬と量（ニュートレス500、メロキシリン5）'] },
+      '子牛の性別・品種・体重（メス、ホルスタイン、40キロ）', '子牛の番号は真ん中の4桁だけ（番号は6720）', '母牛に入れた薬と量（ニュートレス500、メロキシリン5）'] },
   shippei: { title: '疾病の報告', cow: '牛', date: '発生日', color: '#b45309', farmnote: true, cowCard: true,
     example: '例「Dの295番、2群で第四胃食滞、体温38.5度、自家治療。ウルソ40打った」',
     say: ['牛の番号', '発生した牛群（2群で・VICで）', '疾病名', '体温（39度5分）', '獣医か自家治療か・再診・抗生剤', '入れた薬と量'] },
@@ -309,6 +309,11 @@ function setupForm() {
   $('#damTag').addEventListener('input', showDamHits);
   fixTagOnBlur($('#damTag'));
   $('#damId').addEventListener('input', onDamId);
+  // 子牛の持ち主（頭5桁）は母牛で決まる
+  ['input', 'change'].forEach((ev) => {
+    $('#damTag').addEventListener(ev, onDamChange);
+    $('#damId').addEventListener(ev, onDamChange);
+  });
   $('#next').addEventListener('click', onNext);
   $('#back').addEventListener('click', onBack);
 
@@ -919,7 +924,7 @@ function applyFarm() {
     else if (meName) $('#worker').value = meName;
     else if (workers.includes(last)) $('#worker').value = last;
   }
-  $$('#calves .calf').forEach(renderPrefixes);
+  $$('#calves .calf').forEach(renderOwners);
   $$('#moveGroups .mgroup').forEach(renderGroups);
   if (HERD_ACTIVITIES.includes(ACTIVITY)) renderHerdSelect();
   showDamHits();
@@ -972,6 +977,7 @@ function cowHits(tagEl, idEl, box) {
       tagEl.classList.remove('invalid');
       idEl.classList.remove('invalid');
       state.pendingId = '';
+      if (tagEl.id === 'damTag') onDamChange();
     });
     box.append(b);
   });
@@ -1166,15 +1172,11 @@ function addCalf() {
   fillSelect($('.c-breed', node), state.choices.breed, '選択してください');
   fillSelect($('.c-color', node), state.choices.color, '未選択');
 
-  const idEl = $('.c-id', node);
   const tagEl = $('.c-tag', node);
-  idEl.addEventListener('input', () => {
-    idEl.value = toDigits(idEl.value).slice(0, 10);
-    autoTag(node);
-  });
+  $('.c-mid', node).addEventListener('input', () => updateCalfId(node));
   tagEl.addEventListener('input', () => { node.dataset.tagManual = tagEl.value ? '1' : ''; });
   // 「耳標をまだ付けていない」「測れなかった」にチェックしたら、その欄は空にして入力できなくする
-  [['.c-noid', '.c-id'], ['.c-noweight', '.c-weight']].forEach(([boxSel, inputSel]) => {
+  [['.c-noid', '.c-mid'], ['.c-noweight', '.c-weight']].forEach(([boxSel, inputSel]) => {
     const box = $(boxSel, node);
     const input = $(inputSel, node);
     box.addEventListener('change', () => {
@@ -1183,10 +1185,7 @@ function addCalf() {
         input.value = '';
         input.classList.remove('invalid');
       }
-      if (inputSel === '.c-id') {
-        $('.c-prefixes', node).hidden = box.checked;
-        autoTag(node);
-      }
+      if (inputSel === '.c-mid') updateCalfId(node);
     });
   });
   $('.c-breed', node).addEventListener('change', () => renderType(node));
@@ -1199,7 +1198,7 @@ function addCalf() {
   });
 
   list.append(node);
-  renderPrefixes(node);
+  renderOwners(node);
   renumberCalves();
   applyKind();
 }
@@ -1213,26 +1212,100 @@ function renumberCalves() {
   $('#addCalf').hidden = nodes.length >= 3;
 }
 
-/** 子牛の個体識別番号の頭5桁をワンタップで入れるボタン */
-function renderPrefixes(node) {
-  const box = $('.c-prefixes', node);
-  box.textContent = '';
+/**
+ * 子牛の持ち主（希望・DP。「牧場」タブの子牛IDの頭5桁ごとの行）のボタン。選ぶと番号の頭5桁が決まる。
+ * 子牛の持ち主は母牛で決まるので、母牛の耳標（ネ・SK／D・SD）から選んでおく。手で選び直した子牛はそのまま
+ */
+function renderOwners(node) {
   const farm = currentFarm();
-  if (!farm) return;
-  farm.tagRules.forEach((rule) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'chip';
-    b.textContent = `${rule.prefix}…`;
-    b.addEventListener('click', () => {
-      const el = $('.c-id', node);
-      el.value = rule.prefix;
-      el.focus();
-      el.setSelectionRange(el.value.length, el.value.length);
-      autoTag(node);
-    });
-    box.append(b);
+  const rules = farm ? farm.tagRules : [];
+  const box = $('.c-owner', node);
+  segment(box, `${node.dataset.key}-owner`, rules.map((r) => [r.prefix, `${r.owner || r.prefix}（${r.prefix}）`]), value(null, box));
+  $$('input', box).forEach((el) => el.addEventListener('change', (e) => {
+    if (e.isTrusted) {
+      node.dataset.ownerManual = '1';
+      $('.c-owner-hint', node).hidden = true;
+    }
+    updateCalfId(node);
+  }));
+  ownerFromDam(node);
+  updateCalfId(node);
+}
+
+/** 母牛の耳標の頭（ネ・SK／D・SD。「採卵」は飛ばす）から、子牛の持ち主の行を探す。耳標が無ければ「母牛」タブで番号から引く */
+function damOwner() {
+  const farm = currentFarm();
+  if (!farm) return null;
+  let tag = fixTag($('#damTag').value);
+  if (!tag && $('#damId').value.length === 10) tag = (farm.dams.find((x) => x.id === $('#damId').value) || {}).tag || '';
+  const m = tag.match(/^(?:採卵)?\s*([^\d\s（(]+)/);
+  if (!m) return null;
+  const head = m[1].toUpperCase();
+  const rule = farm.tagRules.find((r) => (r.damHeads || []).includes(head));
+  return rule ? { rule, head } : null;
+}
+
+/** 母牛から子牛の持ち主を選ぶ（手で選び直した子牛・10桁を入れた子牛はそのまま） */
+function ownerFromDam(node) {
+  const hint = $('.c-owner-hint', node);
+  if (node.dataset.ownerManual) return;
+  const hit = damOwner();
+  const input = hit && $$('.c-owner input', node).find((i) => i.value === hit.rule.prefix);
+  if (!input) {
+    hint.hidden = true;
+    return;
+  }
+  input.checked = true;
+  $('.c-owner', node).classList.remove('invalid');
+  hint.textContent = `母牛（${hit.head}）から${hit.rule.owner || hit.rule.prefix}の子牛にしました。違うときは選び直してください`;
+  hint.hidden = false;
+}
+
+/** 母牛が変わったら、子牛の持ち主と番号を合わせ直す */
+function onDamChange() {
+  $$('#calves .calf').forEach((node) => {
+    ownerFromDam(node);
+    updateCalfId(node);
   });
+}
+
+const CALF_ID_HINT = '希望かDPかを選び、真ん中の4桁を入れてください。頭の5桁と最後の1桁は自動で入ります（10桁をそのまま入れても大丈夫です）';
+
+/**
+ * 子牛の個体識別番号をそろえる。真ん中の4桁なら、持ち主の頭5桁と最後の1桁（計算）を足して10桁にする。
+ * 10桁を入れたときは、頭5桁が「牧場」タブにあって最後の1桁も合えば、持ち主を選んで真ん中の4桁の表示に直す
+ */
+function updateCalfId(node) {
+  const midEl = $('.c-mid', node);
+  const info = $('.c-id-full', node);
+  const farm = currentFarm();
+  let d = toDigits(midEl.value).slice(0, 10);
+  if (d.length === 10 && farm && validCowId(d)) {
+    const input = $$('.c-owner input', node).find((i) => d.startsWith(i.value));
+    if (input) {
+      input.checked = true;
+      node.dataset.ownerManual = '1';
+      $('.c-owner-hint', node).hidden = true;
+      d = d.slice(5, 9);
+    }
+  }
+  if (midEl.value !== d) midEl.value = d;
+  const prefix = value(null, $('.c-owner', node));
+  let id = '';
+  if (d.length === 10) id = d;
+  else if (d.length === 4 && prefix) id = `${prefix}${d}${checkDigit(prefix + d)}`;
+  $('.c-id', node).value = id;
+  const ok = !id || validCowId(id);
+  $('.c-pre', node).textContent = d.length === 10 ? '' : prefix || '-----';
+  $('.c-cd', node).textContent = d.length === 10 ? '' : id ? id[9] : '-';
+  info.classList.toggle('bad', !ok);
+  if ($('.c-noid', node).checked) info.textContent = '耳標をまだ付けていないときは、番号は空のままで送れます';
+  else if (!ok) info.textContent = '最後の1桁が合いません。番号を確かめてください';
+  else if (id) info.textContent = `個体識別番号 ${id.slice(0, 5)}.${id.slice(5, 9)}.${id[9]}`;
+  else if (d && !prefix) info.textContent = '希望かDPかを選んでください';
+  else info.textContent = CALF_ID_HINT;
+  if (id) midEl.classList.remove('invalid');
+  autoTag(node);
 }
 
 /** 個体識別番号から自家耳標番号を作る（例: 14175 → K。1417567193 → K6719） */
@@ -1240,7 +1313,8 @@ function autoTag(node) {
   if (node.dataset.tagManual) return;
   const id = $('.c-id', node).value;
   const farm = currentFarm();
-  const rule = farm && id.length === 10 ? farm.tagRules.find((r) => id.startsWith(r.prefix)) : null;
+  // 最後の1桁が合わない番号からは作らない（打ち間違いの番号で耳標が入るのを防ぐ）
+  const rule = farm && validCowId(id) ? farm.tagRules.find((r) => id.startsWith(r.prefix)) : null;
   $('.c-tag', node).value = rule ? `${rule.letter}${id.slice(5, 9)}` : '';
 }
 
@@ -1468,8 +1542,15 @@ function validate(r) {
   r.calves.forEach((c, i) => {
     const node = nodes[i];
     const no = r.calves.length > 1 ? `子牛${i + 1}` : '子牛';
-    if (c.id && c.id.length !== 10) bad($('.c-id', node), `${no}の個体識別番号は10桁です`);
-    if (birth && !c.id && !c.noId) bad($('.c-id', node), `${no}の個体識別番号を入れてください（まだ付けていなければチェック）`);
+    const midEl = $('.c-mid', node);
+    const typed = toDigits(midEl.value);
+    const owner = value(null, $('.c-owner', node));
+    if (!c.noId && typed && !c.id) {
+      if (!owner) bad($('.c-owner', node), `${no}が希望の牛かDPの牛かを選んでください`);
+      else bad(midEl, `${no}の個体識別番号は真ん中の4桁（か10桁）で入れてください`);
+    }
+    if (c.id && !validCowId(c.id)) bad(midEl, `${no}の個体識別番号の最後の1桁が合いません。番号を確かめてください`);
+    if (birth && !c.id && !c.noId && !typed) bad(midEl, `${no}の個体識別番号（真ん中の4桁）を入れてください（まだ付けていなければチェック）`);
     if (birth && !c.weight && !c.noWeight) bad($('.c-weight', node), `${no}の出生時体重を入れてください（測れなかったらチェック）`);
     const required = birth || hasCalfInfo(c);
     if (required && !c.sex) bad($('.c-sex', node), `${no}の性別を選んでください`);
@@ -2311,7 +2392,7 @@ function applyCalves(calves, notes, { put, pick }) {
   calves.slice(0, 3).forEach((c) => {
     addCalf();
     const node = $$('#calves .calf').at(-1);
-    put($('.c-id', node), c.id, '子牛の個体識別番号');
+    put($('.c-mid', node), c.id, '子牛の個体識別番号');
     put($('.c-tag', node), c.tag, '子牛の耳標');
     pick($('.c-sex', node), c.sex, '子牛の性別');
     put($('.c-breed', node), c.breed, '子牛の品種');
@@ -2463,6 +2544,21 @@ function fmtCalfId(id) {
 
 function toDigits(s) {
   return String(s).replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0)).replace(/\D/g, '');
+}
+
+/**
+ * 個体識別番号の最後の1桁（9桁から計算する検査用の数字。GAS の checkDigit_ と同じ）。
+ * 左から奇数桁の和を3倍し、偶数桁の和を足して10で割った余りを10から引く（10なら0）。例: 141756720 → 9
+ */
+function checkDigit(n9) {
+  let odd = 0;
+  let even = 0;
+  String(n9).split('').forEach((d, i) => { if (i % 2 === 0) odd += Number(d); else even += Number(d); });
+  return String((10 - ((odd * 3 + even) % 10)) % 10);
+}
+
+function validCowId(id) {
+  return /^\d{10}$/.test(id) && checkDigit(id.slice(0, 9)) === id[9];
 }
 
 /**
