@@ -8,7 +8,7 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // index.html の app.js?v=… も同じ値にそろえる（古いファイルを使い回させないため）
-const APP_VERSION = '2026-10-22c';
+const APP_VERSION = '2026-10-22d';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
@@ -114,6 +114,7 @@ const state = {
   lastPost: null, // 引き継ぎ: 保存したときに Apps Script が作った掲示板の件名と本文
   voiceOn: false, // Apps Script に OpenAI の API キーがあるか（無ければ「まとめて話す」は出さない）
   boards: [], // 書き込める掲示板（投稿先の候補）
+  boardsLoaded: false, // 掲示板の一覧を読み終えたか（引き継ぎの投稿先の案内に使う）
   txBlock: null, // 一緒に入れる投薬の欄
   // 声で入れた結果（送信のときに要確認・文字起こしとして送る）
   voice: { used: false, transcript: '', uncertain: [], recorder: null, chunks: [], timer: null, busy: false },
@@ -375,8 +376,12 @@ async function loadBoards() {
   } catch (_) {
     state.boards = [];
   }
+  state.boardsLoaded = true;
   const sel = $('#dest');
-  if (!state.boards.length || $('optgroup', sel)) return;
+  if (!state.boards.length || $('optgroup', sel)) {
+    if (ACTIVITY === 'hikitsugi') handoverBoardNote();
+    return;
+  }
   const group = document.createElement('optgroup');
   group.label = '掲示板';
   state.boards.forEach((b) => group.append(new Option(b.name, BOARD + b.boardId)));
@@ -387,6 +392,11 @@ async function loadBoards() {
   const pick = options.find((o) => o.value === last)
     || (ACTIVITY === 'hikitsugi' ? options.find((o) => o.textContent.includes('引き継ぎ')) : null);
   if (pick && (ACTIVITY === 'hikitsugi' || !state.canPost)) sel.value = pick.value;
+  // 引き継ぎは、選んでいる引き継ぎ先の掲示板を投稿先にする
+  if (ACTIVITY === 'hikitsugi') {
+    pickHandoverBoard();
+    handoverBoardNote();
+  }
   if (state.view === 'confirm') showPostNote();
 }
 
@@ -506,7 +516,7 @@ function renderHandover() {
   const box = $('#hItems');
   box.textContent = '';
   if (!t) return;
-  $('#hBoardNote').textContent = t.board ? `投稿先: 掲示板「${t.board}」（掲示板の型と同じ項目・順番）` : '';
+  handoverBoardNote();
   const tomorrow = new Date(Date.now() + 86400000);
   const wd = '日月火水木金土'[tomorrow.getDay()];
   t.items.forEach((it, i) => {
@@ -555,6 +565,23 @@ function collectHandover() {
     else items[card.dataset.item] = ($('textarea, input', card).value || '').trim();
   });
   return items;
+}
+
+/**
+ * 引き継ぎの投稿先の案内。掲示板に書き込めないとき（アプリに board の権限が無い・書き込めない掲示板）は、
+ * 確認の画面で選んだトークに同じ項目・順番の文で投稿することを伝える
+ */
+function handoverBoardNote() {
+  const t = currentTemplate();
+  const note = $('#hBoardNote');
+  if (!t || !t.board) {
+    note.textContent = '';
+    return;
+  }
+  const ok = state.boards.some((b) => b.name === t.board);
+  note.textContent = ok || !state.boardsLoaded
+    ? `投稿先: 掲示板「${t.board}」（掲示板の型と同じ項目・順番）`
+    : `掲示板「${t.board}」には今は投稿できません（掲示板の権限がまだ無いか、書き込めない掲示板）。掲示板と同じ項目・順番の文で、確認の画面で選んだトークに投稿します`;
 }
 
 /** 引き継ぎ先の掲示板を投稿先にする（掲示板の一覧が読めたとき） */
