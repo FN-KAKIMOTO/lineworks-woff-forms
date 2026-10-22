@@ -8,7 +8,7 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // index.html の app.js?v=… も同じ値にそろえる（古いファイルを使い回させないため）
-const APP_VERSION = '2026-10-21c';
+const APP_VERSION = '2026-10-22a';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
@@ -253,6 +253,7 @@ function setupForm() {
   $('#dateLabel').textContent = INFO.date;
   $('#date').value = today();
   $('#date').max = today();
+  $('#appVersion').textContent = `画面の版 ${APP_VERSION}`; // 古い画面のままか見分けるため
   $('#damTag').addEventListener('input', showDamHits);
   fixTagOnBlur($('#damTag'));
   $('#damId').addEventListener('input', onDamId);
@@ -298,7 +299,7 @@ function setupDest() {
   if (!state.canPost) sel.append(new Option('トークに投稿しない（文面をコピーして貼る）', COPY));
   const last = (loadSaved().dest || {})[ACTIVITY];
   if (!state.canPost) sel.value = [...sel.options].some((o) => o.value === last) ? last : COPY;
-  $('#destField').hidden = sel.options.length < 2;
+  // 候補が1つでも出す（どこに投稿されるかを確認の画面で見られるように）
   sel.addEventListener('change', showPostNote);
   $('#farmnoteField').hidden = !INFO.farmnote;
   $('#farmnoteHint').hidden = !INFO.farmnote;
