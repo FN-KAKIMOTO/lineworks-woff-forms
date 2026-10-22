@@ -152,6 +152,14 @@
   /* 声で入った項目（手で直したら外れる） */
   .voiced { box-shadow: 0 0 0 2px #e0b341 inset; }
   .seg.voiced { box-shadow: none; outline: 2px solid #e0b341; outline-offset: 2px; border-radius: 10px; }
+  .say { margin-top: 10px; }
+  .say ol { margin: 4px 0 0; padding-left: 22px; font-size: 14px; }
+  .say li { margin: 2px 0; }
+  .say li small { color: var(--muted); }
+  .voice-btn:disabled { opacity: .45; }
+  /* 引き継ぎの長い選択肢（「月曜：窒素補充、削蹄リスト送付」など）は折り返して1行ずつ */
+  .seg.seg-wrap label { flex: 1 1 100%; }
+  .seg.seg-wrap span { white-space: normal; text-align: left; min-height: 48px; padding: 10px 12px; font-size: 16px; }
 </style>
 </head>
 <body>
@@ -190,6 +198,11 @@
     <!-- まとめて話す: 一度に話すと、話した項目がフォームに入る（手で入れた項目は変えない）。足りない・誤りは手で直す -->
     <section class="card" id="voiceCard" hidden>
       <button type="button" id="voiceBtn" class="voice-btn">🎤 まとめて話す</button>
+      <p id="voiceOff" class="hint" hidden>声で入れるのは準備中です（管理者が OpenAI の API キーを入れると使えます）。下の項目をタップ・文字で入れてください</p>
+      <div id="voiceSayBox" class="say">
+        <span class="label">話す順（型）。一部だけ話して、残りはタップ・文字で入れても大丈夫です</span>
+        <ol id="voiceSay"></ol>
+      </div>
       <p id="voiceHint" class="hint"></p>
       <p id="voiceStatus" class="notice" hidden></p>
       <div id="voiceResult" hidden>
@@ -264,9 +277,10 @@
     <!-- 乳房炎 -->
     <div id="nyuboenFields" hidden>
       <section class="card">
-        <h2>乳房炎</h2>
+        <h2>乳房炎（疑い）</h2>
         <div class="field"><span class="label req">分房（複数可）</span><div id="nQuarters" class="seg"></div></div>
         <label class="field"><span>原因菌</span><select id="nBacteria"></select></label>
+        <p class="hint" style="margin-top:-8px">菌が分からないときは「未特定（疑い）」のまま。疾病名「乳房炎疑い」で記録し、Farmnote の乳房炎には入れません（一緒に入れた治療は「乳房炎疑い」で登録）。菌が分かったら、もう一度送ってください</p>
         <label class="field"><span>体温（℃）</span>
           <input id="nTemp" type="number" inputmode="decimal" min="35" max="43" step="0.1" placeholder="測ったときだけ"></label>
         <div class="field"><span class="label">重篤度</span><div id="nSeverity" class="seg"></div></div>
@@ -274,15 +288,14 @@
       </section>
     </div>
 
-    <!-- 蹄病（Farmnote には登録しない） -->
-    <div id="teibyouFields" hidden>
+    <!-- 応急削蹄の依頼（蹄病は断定しない。Farmnote には「応急削蹄」の予定（農場作業）を作る） -->
+    <div id="sakuteiFields" hidden>
       <section class="card">
-        <h2>蹄病</h2>
-        <label class="field"><span class="req">蹄病名</span><select id="tDisease"></select></label>
-        <label class="field" id="tDiseaseOtherField" hidden><span class="req">蹄病名（入力）</span>
-          <input id="tDiseaseOther" autocomplete="off"></label>
-        <div class="field"><span class="label req">患肢（複数可）</span><div id="tLegs" class="seg"></div></div>
-        <label class="field"><span>メモ</span><textarea id="tMemo" rows="2" placeholder="例: ブロック装着"></textarea></label>
+        <h2>応急削蹄の依頼</h2>
+        <p class="hint" style="margin-top:-6px">症状や病名は判断せず、削蹄師さんに見てもらう予定を作ります</p>
+        <label class="field"><span class="req">予定日</span><input id="kPlanned" type="date"></label>
+        <div class="field"><span class="label">気になる肢（わかれば・複数可）</span><div id="kLegs" class="seg"></div></div>
+        <label class="field"><span>メモ</span><textarea id="kSMemo" rows="2" placeholder="例: 内田さん 歩き方がおかしい"></textarea></label>
       </section>
     </div>
 
@@ -290,6 +303,7 @@
     <div id="kirokuFields" hidden>
       <section class="card">
         <h2>記録</h2>
+        <div class="field"><span class="label">よく使うメモ（押すと入ります）</span><div id="kPhrases" class="chips"></div></div>
         <label class="field"><span class="req">記録すること</span><textarea id="kMemo" rows="3" placeholder="例: 分娩10日後検診【結果】問題なし"></textarea></label>
         <details>
           <summary>体重・BCS</summary>
@@ -309,9 +323,13 @@
       </section>
     </div>
 
-    <!-- 引き継ぎメモ（掲示板に投稿するのが既定。Farmnote には登録しない） -->
+    <!-- 引き継ぎ（掲示板の引き継ぎの型に沿って書き、その掲示板に投稿する。Farmnote には登録しない） -->
     <div id="hikitsugiFields" hidden>
-      <div id="hSections"></div>
+      <section class="card">
+        <div class="field"><span class="label req">引き継ぎ先</span><div id="hTarget" class="seg"></div></div>
+        <p id="hBoardNote" class="hint"></p>
+      </section>
+      <div id="hItems"></div>
     </div>
 
     <!-- 死亡・廃用 -->
@@ -361,6 +379,12 @@
         <label class="field"><span>メモ</span><textarea id="srMemo" rows="2" placeholder="例: 7:10 投与"></textarea></label>
       </section>
     </div>
+
+    <!-- どこの牛群で起きたか（疾病・乳房炎・応急削蹄の依頼）。シートの「発生牛群」列に残す -->
+    <section class="card" id="herdCard" hidden>
+      <label class="field"><span class="req" id="herdLabel">発生した牛群</span><select id="herd"></select></label>
+      <p class="hint" style="margin-top:-6px">どこで起きているかを見るために残します（Farmnote には入りません）。分からなければ「わからない」</p>
+    </section>
 
     <!-- 一緒に入れる投薬（分娩・疾病・乳房炎・乾乳）。入れると「治療」タブにも同じ牛の行が入る -->
     <section class="card" id="txCard" hidden>
@@ -503,6 +527,6 @@
 
 <script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>
 <!-- ?v= は app.js の APP_VERSION と同じ値にする（スマホが古い app.js を使い回さないように） -->
-<script src="app.js?v=2026-10-22b"></script>
+<script src="app.js?v=2026-10-22c"></script>
 </body>
 </html>

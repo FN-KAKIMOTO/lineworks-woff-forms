@@ -8,7 +8,7 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // index.html の app.js?v=… も同じ値にそろえる（古いファイルを使い回させないため）
-const APP_VERSION = '2026-10-22b';
+const APP_VERSION = '2026-10-22c';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
@@ -16,46 +16,60 @@ const MOCK = PARAMS.has('mock');
 const TRIAL = PARAMS.has('trial');
 // 報告の種類。トークルームの下のボタン（Bot の固定メニュー）から ?type=… で開く
 // farmnote: 確認の画面に「Farmnote に登録する」を出すか（Farmnote に登録する報告か。GAS の ACTIVITIES と同じ）
-// cowCard: 1頭の牛の欄を出すか、fields: 項目の欄（予防的投与は治療の欄を使う）、example: 「まとめて話す」の例
+// cowCard: 1頭の牛の欄を出すか、fields: 項目の欄（予防的投与は治療の欄を使う）、example: 「まとめて話す」の例、
+// say: 話す順（声の入力の型）。一部だけ話して、残りをタップ・文字で入れてもよい
 const ACTIVITY_INFO = {
   bunben: { title: '分娩の報告', cow: '母牛', date: '分娩日', color: '#2f7d4f', farmnote: true, cowCard: true,
-    example: '例「ネの527番、出産、自然分娩。メス、ホルスタイン、40キロ。ニュートレス500」' },
+    example: '例「ネの527番、出産、自然分娩。メス、ホルスタイン、40キロ。ニュートレス500、メロキシリン5」',
+    say: ['母牛の番号（ネの527番）', '出産・死産・流産', '分娩難易（自然分娩・介助）', '生まれていた か 立ち会った か',
+      '子牛の性別・品種・体重（メス、ホルスタイン、40キロ）', '子牛の個体識別番号（わかれば）', '母牛に入れた薬と量（ニュートレス500、メロキシリン5）'] },
   shippei: { title: '疾病の報告', cow: '牛', date: '発生日', color: '#b45309', farmnote: true, cowCard: true,
-    example: '例「Dの295番、第四胃食滞、体温38.5度、自家治療。ウルソ打った」' },
-  nyuboen: { title: '乳房炎の報告', cow: '牛', date: '発生日', color: '#c2410c', farmnote: true, cowCard: true,
-    example: '例「ネの446番、右後ろの乳房炎。OS。セフロキシム1本」' },
-  teibyou: { title: '蹄病の報告', cow: '牛', date: '日付', color: '#78716c', farmnote: false, cowCard: true,
-    example: '例「SKの5954番、左後ろ、蹄底潰瘍」' },
+    example: '例「Dの295番、2群で第四胃食滞、体温38.5度、自家治療。ウルソ40打った」',
+    say: ['牛の番号', '発生した牛群（2群で・VICで）', '疾病名', '体温（39度5分）', '獣医か自家治療か・再診・抗生剤', '入れた薬と量'] },
+  nyuboen: { title: '乳房炎（疑い）の報告', cow: '牛', date: '発生日', color: '#c2410c', farmnote: true, cowCard: true,
+    example: '例「ネの446番、右後ろ、乳房炎の疑い。体温39.5。セフロキシム1本」',
+    say: ['牛の番号', '分房（右後ろ）', '原因菌（わかれば。OS・CO など。分からなければ言わない）', '体温', '入れた薬と量'] },
+  sakutei: { title: '応急削蹄の依頼', cow: '牛', date: '依頼日', color: '#78716c', farmnote: true,
+    example: '例「ネの371番、左前を気にしてる。明日、内田さんに応急削蹄」',
+    say: ['牛の番号（何頭でも）', '気になる肢（わかれば）', 'いつ（明日・木曜）', '削蹄師さん・様子（メモ）'] },
   kiroku: { title: '個体の記録', cow: '牛', date: '記録日', color: '#0f766e', farmnote: true, cowCard: true,
-    example: '例「ネの146番、分娩10日後検診、問題なし」' },
+    example: '例「ネの146番、分娩10日後検診、問題なし」',
+    say: ['牛の番号', '記録すること（検診の結果・PL・提出したこと など）', '体重・BCS（あれば）'] },
   kannyu: { title: '乾乳の報告', cow: '牛', date: '乾乳日', color: '#4338ca', farmnote: true, cowCard: true,
-    example: '例「ネの300番、乾乳。乾乳セット入れた」' },
+    example: '例「ネの300番、乾乳。いつものセット」',
+    say: ['牛の番号', '乾乳セット以外に入れた薬（あれば）', 'メモ'] },
   haiyou: { title: '死亡・廃用の報告', cow: '牛', date: '死亡・廃用の日', color: '#4b5563', farmnote: true, cowCard: true,
-    example: '例「Dの356番、死亡、起立不能」' },
+    example: '例「Dの356番、死亡、起立不能」',
+    say: ['牛の番号', '死亡か淘汰か', '理由'] },
   idou: { title: '牛群移動の報告', cow: '牛', date: '移動日', color: '#1d5fa8', farmnote: true,
-    example: '例「ネの446番とネの464番を3群に移動」' },
+    example: '例「ネの446番とネの464番を3群に移動」',
+    say: ['牛の番号', '移動先の牛群（3群に・VICに）'] },
   chiryou: { title: '治療の報告', cow: '牛', date: '治療日', color: '#6d28d9', farmnote: true,
-    example: '例「ネの145番、乳房炎疑い、メロキシリン5ミリ」' },
+    example: '例「ネの145番、乳房炎疑い、メロキシリン5ミリ」',
+    say: ['牛の番号（同じ処置なら何頭でも）', '治療区分（治療・ワクチン など）', '薬と量', '疾病名・体温（治療のとき）'] },
   yobou: { title: '予防的投与の報告', cow: '牛', date: '投与日', color: '#7c3aed', farmnote: true, fields: 'chiryou',
-    example: '例「Kの1547番、コクシックス30ミリ」' },
+    example: '例「Kの1547番、コクシックス30ミリ」',
+    say: ['牛の番号（何頭でも）', '薬と量'] },
   sairan: { title: '採卵用プログラム', cow: '牛', date: '処置日', color: '#be185d', farmnote: true,
-    example: '例「採卵SDの501番、7日目の夕方」' },
-  hikitsugi: { title: '引き継ぎメモ', cow: '', date: '日付', color: '#334155', farmnote: false,
-    example: '例「VMSの2号機でネの446番がエラー、3回搾れていない。餌押しは10時に済み」' },
+    example: '例「採卵SDの501番、7日目の夕方」',
+    say: ['牛の番号', '処置（7日目の夕方 など）'] },
+  hikitsugi: { title: '引き継ぎ', cow: '', date: '日付', color: '#334155', farmnote: false,
+    example: '例「1号機の要注意牛はネの41、左前を痛がってる。スラリーは送らないで」',
+    say: [] }, // 引き継ぎ先の型の項目を順に出す
 };
 // トークルームの下のボタン「疾病・乳房炎」（?type=sick）と「ほかの報告」（?type=other）から選ぶ種類
 const CHOOSERS = {
   sick: { title: '疾病・乳房炎', types: [
     ['shippei', '疾病', '疾病名・体温・獣医か自家治療か（治療も一緒に入れられる）'],
-    ['nyuboen', '乳房炎', '分房・原因菌・体温（治療も一緒に入れられる）'],
+    ['nyuboen', '乳房炎（疑い）', '分房・体温。原因菌は分からなくてよい（治療も一緒に入れられる）'],
   ] },
   other: { title: 'ほかの報告', types: [
-    ['teibyou', '蹄病', '蹄病名・患肢（Farmnote には登録しない）'],
+    ['sakutei', '応急削蹄の依頼', '蹄病は断定せず、削蹄の予定を作る'],
     ['kiroku', '個体の記録', '検診の結果・所見など。体重・BCS'],
     ['sairan', '採卵用プログラム', 'OPU と体内採卵の各回の注射・シダー'],
     ['kannyu', '乾乳', '乾乳と乾乳セット'],
     ['yobou', '予防的投与', '薬・量（いつもの組み合わせ）'],
-    ['hikitsugi', '引き継ぎメモ', 'VMS・AMR・餌・ハーズマン（掲示板に投稿）'],
+    ['hikitsugi', '引き継ぎ', 'VMS・AMR・ハーズマン（掲示板の引き継ぎの型どおりに投稿）'],
     ['haiyou', '死亡・廃用', '死亡・淘汰と理由'],
     ['chiryou', '治療（アブレスト以外）', 'ワクチン・繁殖治療など。薬・量・投薬区分'],
   ] },
@@ -73,6 +87,7 @@ const HERE = '__here__'; // 投稿先「このトーク」（開いたトーク�
 const COPY = '__copy__'; // 投稿先「トークに投稿しない」（トーク以外から開いたとき。文面をコピーして貼る）
 const BOARD = 'board:'; // 投稿先の掲示板（board:掲示板ID）
 const VOICE_MAX_SEC = 180; // 1回の録音は3分まで
+const HERD_ACTIVITIES = ['shippei', 'nyuboen', 'sakutei']; // どこの牛群で起きたかを入れる報告
 const TRIAL_KEY_STORE = 'bunben-trial-key';
 const TIME_KINDS = [['found', '生まれていた（子牛発見時刻）'], ['birth', '分娩に立ち会った（分娩時刻）']];
 const STORE_KEY = 'bunben-form';
@@ -91,9 +106,12 @@ const state = {
   wagyuFemaleTypes: [],
   drugs: [],
   sairanSteps: [],
-  hoofDiseases: [],
   attachKubun: {},
-  handover: [],
+  calving: { presets: [], drugs: [] }, // 分娩のときに母牛に入れる投薬（「分娩の投薬」タブ）
+  memoPhrases: [], // よく使うメモ
+  handover: [], // 引き継ぎの型（引き継ぎ先ごとの項目）
+  herdUnknown: 'わからない',
+  lastPost: null, // 引き継ぎ: 保存したときに Apps Script が作った掲示板の件名と本文
   voiceOn: false, // Apps Script に OpenAI の API キーがあるか（無ければ「まとめて話す」は出さない）
   boards: [], // 書き込める掲示板（投稿先の候補）
   txBlock: null, // 一緒に入れる投薬の欄
@@ -151,9 +169,11 @@ async function start() {
   state.wagyuFemaleTypes = res.wagyuFemaleTypes || [];
   state.drugs = res.drugs || [];
   state.sairanSteps = res.sairanSteps || [];
-  state.hoofDiseases = res.hoofDiseases || [];
   state.attachKubun = res.attachKubun || {};
+  state.calving = res.calving || { presets: [], drugs: [] };
+  state.memoPhrases = res.memoPhrases || [];
   state.handover = res.handover || [];
+  state.herdUnknown = res.herdUnknown || 'わからない';
   state.voiceOn = Boolean(res.voice);
   state.presets = res.presets || [];
   state.channel = res.channel || null;
@@ -310,12 +330,14 @@ function setupForm() {
   if (ACTIVITY === 'bunben') setupBunben();
   if (ACTIVITY === 'shippei') setupShippei();
   if (ACTIVITY === 'nyuboen') setupNyuboen();
-  if (ACTIVITY === 'teibyou') setupTeibyou();
+  if (ACTIVITY === 'sakutei') setupSakutei();
+  if (ACTIVITY === 'kiroku') setupKiroku();
   if (ACTIVITY === 'hikitsugi') setupHikitsugi();
   if (ACTIVITY === 'haiyou') setupHaiyou();
   if (ACTIVITY === 'idou') setupIdou();
   if (ACTIVITY === 'chiryou' || ACTIVITY === 'yobou') setupChiryou();
   if (ACTIVITY === 'sairan') setupSairan();
+  setupHerd();
   setupTx();
   setupVoice();
   setupDest();
@@ -390,38 +412,157 @@ function showPostNote() {
 }
 
 function isMultiCow() {
-  return ACTIVITY === 'chiryou' || ACTIVITY === 'yobou' || ACTIVITY === 'sairan';
+  return ACTIVITY === 'chiryou' || ACTIVITY === 'yobou' || ACTIVITY === 'sairan' || ACTIVITY === 'sakutei';
 }
 
-/** 乳房炎: 分房は複数選べる。原因菌は検査のあとで分かることが多いので任意 */
+/** 乳房炎（疑い）: 分房は複数選べる。原因菌は検査のあとで分かることが多く、未特定なら「乳房炎疑い」として記録する */
 function setupNyuboen() {
   multiSegment($('#nQuarters'), 'nQuarters', state.choices.quarter, []);
-  fillSelect($('#nBacteria'), state.choices.bacteria, 'わからない（未検査）');
+  fillSelect($('#nBacteria'), state.choices.bacteria, '未特定（疑い）');
   segment($('#nSeverity'), 'nSeverity', state.choices.severity, '');
 }
 
-/** 蹄病: 蹄病名は「蹄病名」タブ（無ければ既定の一覧）から選ぶ。無い蹄病名は「その他（入力）」 */
-function setupTeibyou() {
-  fillSelect($('#tDisease'), state.hoofDiseases, '選択してください');
-  $('#tDisease').append(new Option('その他（入力）', OTHER));
-  $('#tDisease').addEventListener('change', () => {
-    $('#tDiseaseOtherField').hidden = $('#tDisease').value !== OTHER;
-  });
-  multiSegment($('#tLegs'), 'tLegs', state.choices.quarter, []);
+/** どこの牛群で起きたか（疾病・乳房炎・応急削蹄の依頼）。「牛群」タブの牛群を行き先ごとにまとめ、最後に「わからない」 */
+function setupHerd() {
+  const on = HERD_ACTIVITIES.includes(ACTIVITY);
+  $('#herdCard').hidden = !on;
+  if (!on) return;
+  $('#herdLabel').textContent = ACTIVITY === 'sakutei' ? '気づいた牛群（いる牛群）' : '発生した牛群';
+  renderHerdSelect();
 }
 
-/** 引き継ぎメモ: 区分（VMS・AMR・餌・ハーズマン・その他）ごとの欄 */
+function renderHerdSelect() {
+  const sel = $('#herd');
+  const cur = sel.value;
+  sel.textContent = '';
+  sel.append(new Option('選択してください', ''));
+  herdGroups().forEach((g) => {
+    const group = document.createElement('optgroup');
+    group.label = g;
+    currentHerds().filter((h) => h.group === g).forEach((h) => group.append(new Option(h.name, h.name)));
+    sel.append(group);
+  });
+  sel.append(new Option(state.herdUnknown, state.herdUnknown));
+  if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+  sel.addEventListener('change', () => sel.classList.remove('invalid'));
+}
+
+/** 応急削蹄の依頼: 蹄病は断定せず、牛と予定日（既定は明日）だけ。気になる肢・メモは任意 */
+function setupSakutei() {
+  $('#kPlanned').value = dayAfter(1);
+  $('#kPlanned').min = today();
+  multiSegment($('#kLegs'), 'kLegs', state.choices.quarter, []);
+}
+
+/** 個体の記録: よく使うメモ（「よく使うメモ」タブ）のボタンを押すと、その文をメモに足す。{日付} は今日の「10/22」 */
+function setupKiroku() {
+  const box = $('#kPhrases');
+  const list = state.memoPhrases.filter((x) => !x.activity || x.activity === '個体の記録');
+  box.closest('.field').hidden = !list.length;
+  list.forEach(({ label, text }) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = phrase(label || text);
+    b.addEventListener('click', () => {
+      const el = $('#kMemo');
+      const t = phrase(text);
+      el.value = el.value.trim() ? `${el.value.trim()}\n${t}` : t;
+      el.dataset.touched = '1';
+      el.classList.remove('invalid');
+      state.pendingId = '';
+    });
+    box.append(b);
+  });
+}
+
+function phrase(text) {
+  const d = new Date();
+  return text.replace(/\{日付\}/g, `${d.getMonth() + 1}/${d.getDate()}`);
+}
+
+/**
+ * 引き継ぎ: 引き継ぎ先（「引き継ぎの型」タブ）を選ぶと、その掲示板のテンプレートと同じ項目・順番の欄を出す。
+ * 前回選んだ引き継ぎ先で開く（端末ごと）
+ */
 function setupHikitsugi() {
-  const box = $('#hSections');
-  state.handover.forEach(({ name, note }) => {
+  const names = state.handover.map((t) => t.name);
+  const last = loadSaved().handoverTarget;
+  segment($('#hTarget'), 'hTarget', names, names.includes(last) ? last : names[0] || '');
+  $$('#hTarget input').forEach((el) => el.addEventListener('change', renderHandover));
+  renderHandover();
+}
+
+function currentTemplate() {
+  return state.handover.find((t) => t.name === value('hTarget')) || null;
+}
+
+/**
+ * 引き継ぎの型の項目の欄。文 → 文字の欄、選択 → ボタン、複数選択 → 複数選べるボタン、日付 → 日付、数 → 数字。
+ * 曜日の選択（月曜：…）は明日の曜日、「毎月○日」の選択は明日の日付に合うものを最初から選んでおく
+ */
+function renderHandover() {
+  const t = currentTemplate();
+  const box = $('#hItems');
+  box.textContent = '';
+  if (!t) return;
+  $('#hBoardNote').textContent = t.board ? `投稿先: 掲示板「${t.board}」（掲示板の型と同じ項目・順番）` : '';
+  const tomorrow = new Date(Date.now() + 86400000);
+  const wd = '日月火水木金土'[tomorrow.getDay()];
+  t.items.forEach((it, i) => {
     const card = document.createElement('section');
-    card.className = 'card';
-    card.innerHTML = '<label class="field"><span></span><textarea rows="3"></textarea></label><p class="hint"></p>';
-    $('span', card).textContent = name;
-    $('textarea', card).dataset.section = name;
-    $('.hint', card).textContent = note;
+    card.className = 'card h-item';
+    card.dataset.item = it.name;
+    card.dataset.type = it.type;
+    const key = `h${i}`;
+    if (it.type === '選択' || it.type === '複数選択') {
+      card.innerHTML = '<div class="field"><span class="label"></span><div class="seg"></div><p class="hint"></p></div>';
+      const seg = $('.seg', card);
+      if (it.type === '選択') {
+        const pick = it.options.find((o) => o.startsWith(`${wd}曜`))
+          || it.options.find((o) => o.startsWith(`毎月${tomorrow.getDate()}日`))
+          || (it.options.some((o) => o.startsWith('毎月')) ? it.options.find((o) => o.includes('該当しない')) : '') || '';
+        segment(seg, key, it.options, pick);
+      } else {
+        multiSegment(seg, key, it.options, []);
+      }
+      if (it.options.some((o) => o.length > 8)) seg.classList.add('seg-wrap');
+    } else {
+      card.innerHTML = '<label class="field"><span></span><textarea rows="2"></textarea></label><p class="hint"></p>';
+      if (it.type === '日付' || it.type === '数') {
+        const input = document.createElement('input');
+        input.type = it.type === '日付' ? 'date' : 'number';
+        if (it.type === '数') input.inputMode = 'decimal';
+        $('textarea', card).replaceWith(input);
+      }
+    }
+    $('.label, span', card).textContent = it.name;
+    $('.hint', card).textContent = it.note;
+    $('.hint', card).hidden = !it.note;
     box.append(card);
   });
+  renderSay();
+  pickHandoverBoard();
+}
+
+/** 引き継ぎの値（項目名 → 値。複数選択は配列） */
+function collectHandover() {
+  const items = {};
+  $$('#hItems .h-item').forEach((card) => {
+    const type = card.dataset.type;
+    if (type === '選択') items[card.dataset.item] = value(null, card);
+    else if (type === '複数選択') items[card.dataset.item] = values($('.seg', card));
+    else items[card.dataset.item] = ($('textarea, input', card).value || '').trim();
+  });
+  return items;
+}
+
+/** 引き継ぎ先の掲示板を投稿先にする（掲示板の一覧が読めたとき） */
+function pickHandoverBoard() {
+  const t = currentTemplate();
+  if (!t || !t.board || !state.boards.length) return;
+  const b = state.boards.find((x) => x.name === t.board);
+  if (b) $('#dest').value = BOARD + b.boardId;
 }
 
 /**
@@ -434,7 +575,9 @@ function setupTx() {
   if (!kubuns) return;
   $('#txLabel').textContent = ACTIVITY === 'kannyu' ? '乾乳セット（投薬）も入れる'
     : ACTIVITY === 'bunben' ? '母牛への投薬も入れる（予防的投与・治療）' : '治療（投薬）も入れる';
-  state.txBlock = drugBlock($('#txBlock'), { kubuns, initial: kubuns[0] });
+  // 分娩は「分娩の投薬」タブの組み合わせと薬を先に出す（乾乳セットなどほかの組み合わせは出さない）
+  const calving = ACTIVITY === 'bunben' ? { presets: state.calving.presets, drugFirst: state.calving.drugs } : {};
+  state.txBlock = drugBlock($('#txBlock'), { kubuns, initial: kubuns[0], ...calving });
   $('#txOn').addEventListener('change', applyTx);
   if (ACTIVITY === 'kannyu') {
     $('#txOn').checked = true;
@@ -490,7 +633,7 @@ function applyChiryouDetail() {
  * kubuns: 選べる治療区分（1つなら区分の欄は隠す）、initial: 最初に選ぶ区分、onKubun: 区分を変えたときに呼ぶ。
  * 区分を選ぶと、いつもの組み合わせ（押すと薬と量が入る）と薬の候補をその区分のものに絞る
  */
-function drugBlock(root, { kubuns, initial, onKubun = () => {} }) {
+function drugBlock(root, { kubuns, initial, onKubun = () => {}, presets = null, drugFirst = [] }) {
   const node = $('#drugBlockTpl').content.firstElementChild.cloneNode(true);
   const key = `db${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
   const kubunBox = $('.db-kubun', node);
@@ -498,6 +641,8 @@ function drugBlock(root, { kubuns, initial, onKubun = () => {} }) {
     node,
     list: $('.db-list', node),
     kubun: () => value(null, kubunBox),
+    presets, // 区分に関わらず出す組み合わせ（分娩の投薬）。null なら「いつもの組み合わせ」の区分のもの
+    drugFirst, // 薬の候補で先に出す薬（分娩の投薬）
   };
   segment(kubunBox, `${key}-kubun`, kubuns, kubuns.includes(initial) ? initial : kubuns[0]);
   $('.db-kubun-box', node).hidden = kubuns.length < 2;
@@ -516,7 +661,7 @@ function applyKubun(block) {
   const kubun = block.kubun();
   const box = $('.db-presets', block.node);
   box.textContent = '';
-  const presets = (state.presets || []).filter((p) => p.kubun === kubun);
+  const presets = block.presets || (state.presets || []).filter((p) => p.kubun === kubun);
   $('.db-preset-box', block.node).hidden = !presets.length;
   presets.forEach((p) => {
     const b = document.createElement('button');
@@ -564,7 +709,7 @@ function addDrug(block, preset) {
   if (list.children.length >= MAX_DRUGS) return;
   const node = $('#drugTpl').content.firstElementChild.cloneNode(true);
   const nameEl = $('.d-name', node);
-  const names = drugsForKubun(block.kubun()).map((d) => d.name);
+  const names = [...new Set(block.drugFirst.concat(drugsForKubun(block.kubun()).map((d) => d.name)))];
   if (preset && !names.includes(preset.name)) names.push(preset.name);
   fillSelect(nameEl, names, '薬を選ぶ');
   nameEl.append(new Option('その他（入力）', OTHER));
@@ -749,6 +894,7 @@ function applyFarm() {
   }
   $$('#calves .calf').forEach(renderPrefixes);
   $$('#moveGroups .mgroup').forEach(renderGroups);
+  if (HERD_ACTIVITIES.includes(ACTIVITY)) renderHerdSelect();
   showDamHits();
 }
 
@@ -1120,6 +1266,7 @@ function collect() {
       shinryo: value('shinryo'),
       saishin: value('saishin'),
       kousei: value('kousei'),
+      herd: $('#herd').value,
       memo: $('#sMemo').value.trim(),
       treatment: collectTx(),
     };
@@ -1131,16 +1278,21 @@ function collect() {
       bacteria: $('#nBacteria').value,
       temp: $('#nTemp').value.trim(),
       severity: value('nSeverity'),
+      herd: $('#herd').value,
       memo: $('#nMemo').value.trim(),
       treatment: collectTx(),
     };
   }
-  if (ACTIVITY === 'teibyou') {
+  if (ACTIVITY === 'sakutei') {
     return {
       ...base,
-      disease: $('#tDisease').value === OTHER ? $('#tDiseaseOther').value.trim() : $('#tDisease').value,
-      legs: values($('#tLegs')),
-      memo: $('#tMemo').value.trim(),
+      damTag: '',
+      damId: '',
+      cows: $$('#cowList .m-cow').map(readCowRow).filter(Boolean),
+      legs: values($('#kLegs')),
+      plannedDate: $('#kPlanned').value,
+      herd: $('#herd').value,
+      memo: $('#kSMemo').value.trim(),
     };
   }
   if (ACTIVITY === 'kiroku') {
@@ -1155,7 +1307,8 @@ function collect() {
       damTag: '',
       damId: '',
       memo: '',
-      sections: Object.fromEntries($$('#hSections textarea').map((t) => [t.dataset.section, t.value.trim()])),
+      target: value('hTarget'),
+      items: collectHandover(),
     };
   }
   if (ACTIVITY === 'haiyou') {
@@ -1243,7 +1396,16 @@ function validate(r) {
   if (ACTIVITY === 'idou') validateMoves(r, bad);
   if (ACTIVITY === 'chiryou' || ACTIVITY === 'yobou') validateChiryou(r, bad);
   if (ACTIVITY === 'sairan') validateSairan(r, bad);
-  if (ACTIVITY === 'hikitsugi' && !Object.values(r.sections).some(Boolean)) bad($('#hSections textarea'), '引き継ぐことを入れてください');
+  if (ACTIVITY === 'hikitsugi') {
+    if (!r.target) bad($('#hTarget'), '引き継ぎ先を選んでください');
+    else if (!Object.values(r.items).some((v) => (Array.isArray(v) ? v.length : v))) bad($('#hItems .h-item textarea, #hItems .h-item input'), '引き継ぐことを入れてください');
+  }
+  if (ACTIVITY === 'sakutei') {
+    checkCowRows($$('#cowList .m-cow'), bad, new Set(), '');
+    if (!r.plannedDate) bad($('#kPlanned'), '応急削蹄の予定日を入れてください');
+    else if (r.plannedDate < today()) bad($('#kPlanned'), '応急削蹄の予定日が過去になっています');
+  }
+  if (HERD_ACTIVITIES.includes(ACTIVITY) && !r.herd) bad($('#herd'), `${$('#herdLabel').textContent}を選んでください`);
   if (!r.date) bad($('#date'), `${INFO.date}を入れてください`);
   else if (r.date > today()) bad($('#date'), `${INFO.date}が未来になっています`);
   if (!r.worker) bad($('#worker'), '作業者を選んでください');
@@ -1253,11 +1415,6 @@ function validate(r) {
   if (ACTIVITY === 'nyuboen') {
     if (!r.quarters.length) bad($('#nQuarters'), '分房を選んでください');
     if (!tempOk(r.temp)) bad($('#nTemp'), '体温を確認してください（35〜43℃）');
-    return errors;
-  }
-  if (ACTIVITY === 'teibyou') {
-    if (!r.disease) bad($('#tDisease').value === OTHER ? $('#tDiseaseOther') : $('#tDisease'), '蹄病名を選ぶか入れてください');
-    if (!r.legs.length) bad($('#tLegs'), '患肢を選んでください');
     return errors;
   }
   if (ACTIVITY === 'kiroku') {
@@ -1388,6 +1545,7 @@ async function send() {
     });
     // 時刻はシートに記録された送信時刻を使う
     const report = state.report;
+    state.lastPost = res.post || null;
     const message = buildMessage(report, res.time);
     remember(report, destValue);
     state.pendingId = '';
@@ -1474,13 +1632,8 @@ async function postViaBoard(report, id, dest, time) {
 }
 
 function boardContent(r, time) {
-  if (r.activity === 'hikitsugi') {
-    const [, m, d] = r.date.split('-').map(Number);
-    return {
-      title: `【引き継ぎ】${m}月${d}日　${r.worker}`,
-      text: state.handover.filter(({ name }) => r.sections[name]).map(({ name }) => `■${name}\n${r.sections[name]}`).join('\n\n'),
-    };
-  }
+  // 引き継ぎは、保存したときに Apps Script が引き継ぎの型で作った件名・本文（シートの行と同じ）
+  if (r.activity === 'hikitsugi' && state.lastPost) return state.lastPost;
   const [first, ...rest] = buildMessage(r, time).split('\n');
   return { title: first, text: rest.join('\n') || first };
 }
@@ -1498,18 +1651,21 @@ function resetForNext() {
   if (ACTIVITY === 'nyuboen') {
     ['#nBacteria', '#nTemp', '#nMemo'].forEach((s) => { $(s).value = ''; });
     $$('#nQuarters input, #nSeverity input').forEach((el) => { el.checked = false; });
-  } else if (ACTIVITY === 'teibyou') {
-    // 削蹄のときは同じ蹄病が続くことがあるので、蹄病名は残す
-    $('#tMemo').value = '';
-    $$('#tLegs input').forEach((el) => { el.checked = false; });
+  } else if (ACTIVITY === 'sakutei') {
+    // 同じ日に続けて頼むことが多いので、予定日と牛群は残す
+    $('#kSMemo').value = '';
+    $$('#kLegs input').forEach((el) => { el.checked = false; });
+    $('#cowList').textContent = '';
+    addCowRow();
   } else if (ACTIVITY === 'kiroku') {
     // 同じ記録（検診の結果・農協提出済 など）を続けて別の牛に入れることが多いので、メモは残す
     ['#kWeight', '#kBcs'].forEach((s) => { $(s).value = ''; });
   } else if (ACTIVITY === 'kannyu') {
     $('#kaMemo').value = '';
   } else if (ACTIVITY === 'hikitsugi') {
-    $$('#hSections textarea').forEach((t) => { t.value = ''; });
+    renderHandover();
   }
+  if (ACTIVITY === 'shippei' || ACTIVITY === 'nyuboen') $('#herd').value = '';
   if (ACTIVITY === 'bunben') {
     $('#memo').value = '';
     check('kind', '出産');
@@ -1614,6 +1770,7 @@ function reportRows(r, time) {
     const rows = [['牛', cow], ['疾病名', r.disease]];
     if (r.temp) rows.push(['体温', `${Number(r.temp).toFixed(1)}℃`]);
     rows.push(['診療', [r.shinryo, r.saishin, r.kousei].filter(Boolean).join('・')]);
+    rows.push(['牛群', r.herd]);
     if (!isToday) rows.push(['発生日', day]);
     return { title: '疾病の報告', rows: rows.concat(tail) };
   }
@@ -1622,13 +1779,16 @@ function reportRows(r, time) {
     if (r.bacteria) rows.push(['原因菌', r.bacteria]);
     if (r.temp) rows.push(['体温', `${Number(r.temp).toFixed(1)}℃`]);
     if (r.severity) rows.push(['重篤度', r.severity]);
+    rows.push(['牛群', r.herd]);
     if (!isToday) rows.push(['発生日', day]);
-    return { title: '乳房炎の報告', rows: rows.concat(tail) };
+    // 原因菌が分からないときは「疑い」
+    return { title: r.bacteria ? '乳房炎の報告' : '乳房炎（疑い）の報告', rows: rows.concat(tail) };
   }
-  if (r.activity === 'teibyou') {
-    const rows = [['牛', cow], ['蹄病', r.disease], ['患肢', r.legs.join('・')]];
-    if (!isToday) rows.push(['日付', day]);
-    return { title: '蹄病の報告', rows: rows.concat(tail) };
+  if (r.activity === 'sakutei') {
+    const [, pm, pd] = r.plannedDate.split('-').map(Number);
+    const rows = [[r.cows.length > 1 ? `${r.cows.length}頭` : '牛', r.cows.map((c) => c.tag || c.id).join('・')], ['予定日', `${pm}月${pd}日`], ['牛群', r.herd]];
+    if (r.legs.length) rows.push(['気になる肢', r.legs.join('・')]);
+    return { title: '応急削蹄の依頼', rows: rows.concat(tail) };
   }
   if (r.activity === 'kiroku') {
     // 個体の記録はメモが本体なので、メモを1行目に出す
@@ -1645,9 +1805,9 @@ function reportRows(r, time) {
     return { title: '乾乳の報告', rows: rows.concat(tail) };
   }
   if (r.activity === 'hikitsugi') {
-    // 引き継ぎは区分ごとに、書いたとおりの改行で出す
-    const rows = state.handover.filter(({ name }) => r.sections[name]).map(({ name }) => [name, r.sections[name]]);
-    return { title: `引き継ぎメモ ${day}`, rows: rows.concat(tail) };
+    // 引き継ぎは型の項目の順に、書いた（選んだ）ものだけを、書いたとおりの改行で出す
+    const rows = Object.entries(r.items).map(([name, v]) => [name, Array.isArray(v) ? v.join('・') : v]).filter(([, v]) => v);
+    return { title: `${r.target}の引き継ぎ ${day}`, rows: rows.concat(tail) };
   }
   if (r.activity === 'haiyou') {
     const rows = [['牛', cow], ['理由', r.reason]];
@@ -1771,11 +1931,18 @@ function buildFlex(r, time) {
 
 // ---------- まとめて話す ----------
 
-/** 「まとめて話す」の欄（Apps Script に OpenAI の API キーがあるときだけ出す） */
+/**
+ * 「まとめて話す」の欄と、話す順（声の入力の型）。Apps Script に OpenAI の API キーが無いときは、型だけ出してボタンは押せない
+ */
 function setupVoice() {
-  $('#voiceCard').hidden = !state.voiceOn;
-  if (!state.voiceOn) return;
+  $('#voiceCard').hidden = false;
+  renderSay();
+  $('#voiceBtn').disabled = !state.voiceOn;
+  $('#voiceOff').hidden = state.voiceOn;
+  $('#voiceTextBox').hidden = !state.voiceOn;
   $('#voiceHint').textContent = `${INFO.example}。足りないところ・誤っているところは、あとで手で直せます。先に手で入れた項目は変えません`;
+  $('#voiceHint').hidden = !state.voiceOn;
+  if (!state.voiceOn) return;
   $('#voiceBtn').addEventListener('click', toggleRecording);
   $('#voiceTextBtn').addEventListener('click', () => {
     const text = $('#voiceText').value.trim();
@@ -1834,6 +2001,27 @@ async function toggleRecording() {
   tick();
   v.timer = setInterval(tick, 500);
   voiceStatus('話してください。終わったらもう一度押します');
+}
+
+/** 話す順（型）。引き継ぎは選んだ引き継ぎ先の項目の順 */
+function renderSay() {
+  const list = $('#voiceSay');
+  if (!list) return;
+  list.textContent = '';
+  const t = ACTIVITY === 'hikitsugi' ? currentTemplate() : null;
+  const items = t ? t.items.map((it) => [it.name, it.type === '選択' || it.type === '複数選択' ? it.options.map((o) => o.split('：')[0]).slice(0, 4).join('・') : it.note])
+    : (INFO.say || []).map((x) => [x, '']);
+  items.forEach(([name, note]) => {
+    const li = document.createElement('li');
+    li.textContent = name;
+    if (note) {
+      const small = document.createElement('small');
+      small.textContent = `（${note.slice(0, 40)}）`;
+      li.append(' ', small);
+    }
+    list.append(li);
+  });
+  $('#voiceSayBox').hidden = !items.length;
 }
 
 function blobToBase64(blob) {
@@ -2012,6 +2200,7 @@ function applyVoice(f) {
   } else if (ACTIVITY === 'shippei') {
     put($('#disease'), f.disease, '疾病名');
     put($('#temp'), f.temp, '体温');
+    put($('#herd'), f.herd, '発生した牛群');
     pick($('#shinryo'), f.shinryo, '診療');
     pick($('#saishin'), f.saishin, '再診');
     pick($('#kousei'), f.kousei, '抗生剤');
@@ -2021,11 +2210,14 @@ function applyVoice(f) {
     put($('#nBacteria'), f.bacteria, '原因菌');
     put($('#nTemp'), f.temp, '体温');
     pick($('#nSeverity'), f.severity, '重篤度');
+    put($('#herd'), f.herd, '発生した牛群');
     putText($('#nMemo'), f.memo);
-  } else if (ACTIVITY === 'teibyou') {
-    put($('#tDisease'), f.disease, '蹄病名');
-    pickMany($('#tLegs'), f.legs, '患肢');
-    putText($('#tMemo'), f.memo);
+  } else if (ACTIVITY === 'sakutei') {
+    applyCows(f.cows || [], notes);
+    pickMany($('#kLegs'), f.legs, '気になる肢');
+    put($('#kPlanned'), f.plannedDate, '予定日');
+    put($('#herd'), f.herd, '牛群');
+    putText($('#kSMemo'), f.memo);
   } else if (ACTIVITY === 'kiroku') {
     putText($('#kMemo'), f.memo);
     put($('#kWeight'), f.weight, '体重');
@@ -2059,7 +2251,16 @@ function applyVoice(f) {
     pick($('#sAsayu'), f.asayu, '朝・夕');
     putText($('#srMemo'), f.memo);
   } else if (ACTIVITY === 'hikitsugi') {
-    $$('#hSections textarea').forEach((t) => putText(t, (f.sections || {})[t.dataset.section]));
+    // 引き継ぎの型の項目ごと: 文は後ろに足す、選択はボタン、複数選択は複数、日付・数はそのまま
+    $$('#hItems .h-item').forEach((card) => {
+      const v = (f.items || {})[card.dataset.item];
+      if (v == null || v === '') return;
+      const type = card.dataset.type;
+      if (type === '選択') pick($('.seg', card), v, card.dataset.item);
+      else if (type === '複数選択') pickMany($('.seg', card), Array.isArray(v) ? v : [v], card.dataset.item);
+      else if (type === '文') putText($('textarea', card), v);
+      else put($('input', card), v, card.dataset.item);
+    });
   }
   // 一緒に入れる投薬（話に出たときだけ開く）
   const tx = f.treatment;
@@ -2265,6 +2466,12 @@ function pad(n) {
   return String(n).padStart(2, '0');
 }
 
+/** 今日から n 日後（YYYY-MM-DD） */
+function dayAfter(n) {
+  const d = new Date(Date.now() + n * 86400000);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function today() {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -2308,6 +2515,7 @@ function remember(r, dest) {
     saved.workers = { ...(saved.workers || {}), [r.farm]: r.worker };
     if (dest && dest !== HERE) saved.dest = { ...(saved.dest || {}), [r.activity]: dest };
     if (r.activity === 'chiryou') saved.chiryouKubun = r.kubun; // 次に開いたとき同じ治療区分を選んでおく
+    if (r.activity === 'hikitsugi') saved.handoverTarget = r.target; // 次に開いたとき同じ引き継ぎ先で開く
     localStorage.setItem(STORE_KEY, JSON.stringify(saved));
   } catch (_) {
     // 保存できなくても入力には影響しない
