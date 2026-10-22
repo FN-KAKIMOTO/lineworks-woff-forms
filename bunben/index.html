@@ -140,6 +140,18 @@
   .status { text-align: center; padding: 48px 16px; color: var(--muted); }
   .done-mark { font-size: 40px; color: var(--accent); }
   .notice { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  /* まとめて話す */
+  .voice-btn {
+    width: 100%; font: inherit; font-size: 19px; font-weight: 700; min-height: 64px; border-radius: var(--radius);
+    border: 2px solid var(--accent); background: var(--accent-weak); color: var(--text);
+  }
+  .voice-btn.rec { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .warn { color: var(--text); background: #fff4d6; border-radius: 8px; padding: 10px 12px; margin: 10px 0 0; font-size: 14px; }
+  .warn ul { margin: 4px 0 0; padding-left: 18px; }
+  @media (prefers-color-scheme: dark) { .warn { background: #3a3220; } }
+  /* 声で入った項目（手で直したら外れる） */
+  .voiced { box-shadow: 0 0 0 2px #e0b341 inset; }
+  .seg.voiced { box-shadow: none; outline: 2px solid #e0b341; outline-offset: 2px; border-radius: 10px; }
 </style>
 </head>
 <body>
@@ -163,18 +175,34 @@
 
   <section id="adminBox" class="card" hidden>
     <h2>管理: トークルームの下のボタン</h2>
-    <p class="hint">Bot「FDP報告ボタン」の固定メニュー（分娩・疾病・牛群移動・その他の報告の4つのボタン）を登録します。</p>
+    <p class="hint">Bot「FDP報告ボタン」の固定メニュー（分娩・疾病と乳房炎・牛群移動・ほかの報告の4つのボタン）を登録します。</p>
     <button type="button" id="setupMenu" class="primary" style="width:100%;margin-top:12px">固定メニューを登録する</button>
     <p id="adminResult" class="notice"></p>
   </section>
 
-  <!-- 「その他の報告」ボタンから開いたとき: 報告の種類を選ぶ -->
+  <!-- 「疾病・乳房炎」「ほかの報告」ボタンから開いたとき: 報告の種類を選ぶ -->
   <section id="chooser" hidden>
     <p class="hint" style="margin:0 0 10px">報告の種類を選んでください</p>
     <div id="chooserButtons"></div>
   </section>
 
   <form id="form" novalidate hidden>
+    <!-- まとめて話す: 一度に話すと、話した項目がフォームに入る（手で入れた項目は変えない）。足りない・誤りは手で直す -->
+    <section class="card" id="voiceCard" hidden>
+      <button type="button" id="voiceBtn" class="voice-btn">🎤 まとめて話す</button>
+      <p id="voiceHint" class="hint"></p>
+      <p id="voiceStatus" class="notice" hidden></p>
+      <div id="voiceResult" hidden>
+        <div id="uncertainBox" class="warn" hidden></div>
+        <details><summary>話した内容（文字起こし）</summary><p id="transcript" class="preview"></p></details>
+      </div>
+      <details id="voiceTextBox">
+        <summary>文字で入れる（キーボードの音声入力など）</summary>
+        <textarea id="voiceText" rows="3" placeholder="例: ネの446番、右後ろの乳房炎、体温39.5度"></textarea>
+        <button type="button" id="voiceTextBtn" class="small" style="width:100%;margin-top:8px">この文で入れる</button>
+      </details>
+    </section>
+
     <section class="card" id="farmCard">
       <label class="field"><span class="req">牧場</span><select id="farm"></select></label>
     </section>
@@ -233,6 +261,59 @@
       </section>
     </div>
 
+    <!-- 乳房炎 -->
+    <div id="nyuboenFields" hidden>
+      <section class="card">
+        <h2>乳房炎</h2>
+        <div class="field"><span class="label req">分房（複数可）</span><div id="nQuarters" class="seg"></div></div>
+        <label class="field"><span>原因菌</span><select id="nBacteria"></select></label>
+        <label class="field"><span>体温（℃）</span>
+          <input id="nTemp" type="number" inputmode="decimal" min="35" max="43" step="0.1" placeholder="測ったときだけ"></label>
+        <div class="field"><span class="label">重篤度</span><div id="nSeverity" class="seg"></div></div>
+        <label class="field"><span>メモ</span><textarea id="nMemo" rows="2" placeholder="例: ブツあり 肉休薬10/30まで"></textarea></label>
+      </section>
+    </div>
+
+    <!-- 蹄病（Farmnote には登録しない） -->
+    <div id="teibyouFields" hidden>
+      <section class="card">
+        <h2>蹄病</h2>
+        <label class="field"><span class="req">蹄病名</span><select id="tDisease"></select></label>
+        <label class="field" id="tDiseaseOtherField" hidden><span class="req">蹄病名（入力）</span>
+          <input id="tDiseaseOther" autocomplete="off"></label>
+        <div class="field"><span class="label req">患肢（複数可）</span><div id="tLegs" class="seg"></div></div>
+        <label class="field"><span>メモ</span><textarea id="tMemo" rows="2" placeholder="例: ブロック装着"></textarea></label>
+      </section>
+    </div>
+
+    <!-- 個体の記録（ほぼメモ。体重・BCS は任意） -->
+    <div id="kirokuFields" hidden>
+      <section class="card">
+        <h2>記録</h2>
+        <label class="field"><span class="req">記録すること</span><textarea id="kMemo" rows="3" placeholder="例: 分娩10日後検診【結果】問題なし"></textarea></label>
+        <details>
+          <summary>体重・BCS</summary>
+          <div class="row2">
+            <label class="field"><span>体重（kg）</span><input id="kWeight" type="number" inputmode="decimal" min="1" step="0.1"></label>
+            <label class="field"><span>BCS</span><input id="kBcs" type="number" inputmode="decimal" min="1" max="5" step="0.25"></label>
+          </div>
+        </details>
+      </section>
+    </div>
+
+    <!-- 乾乳（乾乳セットは下の投薬の欄） -->
+    <div id="kannyuFields" hidden>
+      <section class="card">
+        <h2>乾乳</h2>
+        <label class="field"><span>メモ</span><textarea id="kaMemo" rows="2" placeholder="例: PL-"></textarea></label>
+      </section>
+    </div>
+
+    <!-- 引き継ぎメモ（掲示板に投稿するのが既定。Farmnote には登録しない） -->
+    <div id="hikitsugiFields" hidden>
+      <div id="hSections"></div>
+    </div>
+
     <!-- 死亡・廃用 -->
     <div id="haiyouFields" hidden>
       <section class="card">
@@ -281,6 +362,13 @@
       </section>
     </div>
 
+    <!-- 一緒に入れる投薬（分娩・疾病・乳房炎・乾乳）。入れると「治療」タブにも同じ牛の行が入る -->
+    <section class="card" id="txCard" hidden>
+      <label class="check" style="margin-top:0"><input type="checkbox" id="txOn"> <span id="txLabel">投薬も入れる</span></label>
+      <p class="hint" id="txHint">入れると「治療」タブにも記録します</p>
+    </section>
+    <div id="txBlock" hidden></div>
+
     <!-- 日付と作業者はほぼ今日・本人なので最後に置く -->
     <section class="card">
       <div class="row2">
@@ -298,6 +386,7 @@
     <div class="card">
       <h2>この内容で送信します</h2>
       <p id="preview" class="preview"></p>
+      <div id="confirmUncertain" class="warn" hidden></div>
     </div>
     <div class="card">
       <!-- 投稿先: 既定は開いたトーク。ほかのトークは「投稿先」タブで名前の付いた、開いたことのあるトーク（Bot 名義） -->
@@ -414,6 +503,6 @@
 
 <script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>
 <!-- ?v= は app.js の APP_VERSION と同じ値にする（スマホが古い app.js を使い回さないように） -->
-<script src="app.js?v=2026-10-22a"></script>
+<script src="app.js?v=2026-10-22b"></script>
 </body>
 </html>
