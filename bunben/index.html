@@ -253,17 +253,9 @@
       </section>
     </div>
 
-    <!-- 治療（アブレスト以外） -->
+    <!-- 治療（アブレスト以外）。治療区分・いつもの組み合わせ・薬は投薬の欄（drugBlockTpl） -->
     <div id="chiryouFields" hidden>
-      <section class="card">
-        <div class="field"><span class="label req">治療区分</span><div id="cKubun" class="seg"></div></div>
-        <div class="field" id="cPresetBox"><span class="label">いつもの組み合わせ（押すと薬と量が入ります）</span><div id="cPresets"></div></div>
-      </section>
-      <section class="card">
-        <h2>薬</h2>
-        <div id="drugList"></div>
-        <button type="button" id="addDrug" class="small" style="width:100%">＋ 薬を追加</button>
-      </section>
+      <div id="cDrugBlock"></div>
       <!-- 疾病名・体温・ステータスは治療区分「治療」のときだけ（ワクチン・予防的投与・繁殖治療ではほぼ入れていない） -->
       <section class="card" id="cDetail">
         <label class="field"><span>疾病名</span><select id="cDisease"></select></label>
@@ -305,7 +297,13 @@
     <div class="card">
       <h2>この内容で送信します</h2>
       <p id="preview" class="preview"></p>
-      <p id="postNote" class="notice"></p>
+    </div>
+    <div class="card">
+      <!-- 投稿先: 既定は開いたトーク。ほかのトークは「投稿先」タブで名前の付いた、開いたことのあるトーク（Bot 名義） -->
+      <label class="field" id="destField"><span>投稿先</span><select id="dest"></select></label>
+      <p id="postNote" class="notice" style="margin-top:0"></p>
+      <label class="check" id="farmnoteField"><input type="checkbox" id="farmnote" checked> Farmnote に登録する</label>
+      <p class="hint" id="farmnoteHint">外すと、スプレッドシートには残しますが Farmnote には登録しません</p>
     </div>
     <div id="sendError" class="errors" role="alert" hidden></div>
   </section>
@@ -380,6 +378,21 @@
   </div>
 </template>
 
+<!-- 投薬の欄（治療区分・いつもの組み合わせ・薬）。治療のフォームのほか、分娩・疾病などに一緒に入れる投薬でも使う -->
+<template id="drugBlockTpl">
+  <div class="drug-block">
+    <section class="card">
+      <div class="field db-kubun-box"><span class="label req">治療区分</span><div class="seg db-kubun"></div></div>
+      <div class="field db-preset-box"><span class="label">いつもの組み合わせ（押すと薬と量が入ります）</span><div class="db-presets"></div></div>
+    </section>
+    <section class="card">
+      <h2>薬</h2>
+      <div class="db-list"></div>
+      <button type="button" class="small db-add" style="width:100%">＋ 薬を追加</button>
+    </section>
+  </div>
+</template>
+
 <template id="drugTpl">
   <div class="drug">
     <div class="cow-row">
@@ -400,6 +413,6 @@
 
 <script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>
 <!-- ?v= は app.js の APP_VERSION と同じ値にする（スマホが古い app.js を使い回さないように） -->
-<script src="app.js?v=2026-10-21b"></script>
+<script src="app.js?v=2026-10-21c"></script>
 </body>
 </html>

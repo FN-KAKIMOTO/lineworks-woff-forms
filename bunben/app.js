@@ -8,20 +8,21 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // index.html の app.js?v=… も同じ値にそろえる（古いファイルを使い回させないため）
-const APP_VERSION = '2026-10-21b';
+const APP_VERSION = '2026-10-21c';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
 // 試行モード（?trial=1）: WOFF を使わずブラウザで開く。キー（GAS の TRIAL_KEY）は初回に貼り付けてもらい、その端末に保存する
 const TRIAL = PARAMS.has('trial');
 // 報告の種類。トークルームの下のボタン（Bot の固定メニュー）から ?type=… で開く
+// farmnote: 確認の画面に「Farmnote に登録する」を出すか（Farmnote に登録する報告か。GAS の ACTIVITIES と同じ）
 const ACTIVITY_INFO = {
-  bunben: { title: '分娩の報告', cow: '母牛', date: '分娩日', color: '#2f7d4f' },
-  shippei: { title: '疾病の報告', cow: '牛', date: '発生日', color: '#b45309' },
-  haiyou: { title: '死亡・廃用の報告', cow: '牛', date: '死亡・廃用の日', color: '#4b5563' },
-  idou: { title: '牛群移動の報告', cow: '牛', date: '移動日', color: '#1d5fa8' },
-  chiryou: { title: '治療の報告', cow: '牛', date: '治療日', color: '#6d28d9' },
-  sairan: { title: '採卵の処置', cow: '牛', date: '処置日', color: '#be185d' },
+  bunben: { title: '分娩の報告', cow: '母牛', date: '分娩日', color: '#2f7d4f', farmnote: true },
+  shippei: { title: '疾病の報告', cow: '牛', date: '発生日', color: '#b45309', farmnote: true },
+  haiyou: { title: '死亡・廃用の報告', cow: '牛', date: '死亡・廃用の日', color: '#4b5563', farmnote: true },
+  idou: { title: '牛群移動の報告', cow: '牛', date: '移動日', color: '#1d5fa8', farmnote: true },
+  chiryou: { title: '治療の報告', cow: '牛', date: '治療日', color: '#6d28d9', farmnote: true },
+  sairan: { title: '採卵の処置', cow: '牛', date: '処置日', color: '#be185d', farmnote: true },
 };
 // 「その他の報告」ボタン（?type=other）から選ぶ種類
 const OTHER_TYPES = [
@@ -38,6 +39,8 @@ const PICKING = PARAMS.get('type') === 'other'; // 種類を選ぶ画面から�
 let ACTIVITY = ACTIVITY_INFO[PARAMS.get('type')] ? PARAMS.get('type') : 'bunben';
 let INFO = ACTIVITY_INFO[ACTIVITY];
 const OTHER = '__other__'; // 疾病名・薬「その他（入力）」
+const HERE = '__here__'; // 投稿先「このトーク」（開いたトークに本人名義で投稿）
+const COPY = '__copy__'; // 投稿先「トークに投稿しない」（トーク以外から開いたとき。文面をコピーして貼る）
 const TRIAL_KEY_STORE = 'bunben-trial-key';
 const TIME_KINDS = [['found', '生まれていた（子牛発見時刻）'], ['birth', '分娩に立ち会った（分娩時刻）']];
 const STORE_KEY = 'bunben-form';
@@ -59,6 +62,10 @@ const state = {
   links: [],
   presets: [],
   canPost: false,
+  channelId: '', // 開いたトーク（スマホアプリのトークから開いたときだけ）
+  channel: null, // 開いたトークの { channelId, name }（名前は「投稿先」タブで管理者が付ける）
+  destinations: [], // ほかに投稿できるトーク [{ channelId, name }]
+  drugBlock: null, // 治療の投薬の欄
   trialKey: '',
   view: 'form',
   report: null,
@@ -85,11 +92,12 @@ async function start() {
     }
     state.profile = await woff.getProfile();
     state.token = woff.getAccessToken();
-    state.canPost = await canPostToTalk();
+    state.channelId = await currentChannelId();
+    state.canPost = Boolean(state.channelId);
   }
   let res;
   try {
-    res = await api('config');
+    res = await api('config', { channelId: state.channelId });
   } catch (e) {
     if (TRIAL) writeStore(TRIAL_KEY_STORE, ''); // キーが違うときは次に開いたとき聞き直す
     throw e;
@@ -106,6 +114,8 @@ async function start() {
   state.sairanSteps = res.sairanSteps || [];
   state.links = res.links || [];
   state.presets = res.presets || [];
+  state.channel = res.channel || null;
+  state.destinations = res.destinations || [];
   if (!state.farms.length) throw new Error('設定シート「牧場」に牧場がありません');
   $('#loading').hidden = true;
   if (PARAMS.get('admin') === 'menu' && state.user.isAdmin) setupAdmin();
@@ -191,16 +201,16 @@ function askTrialKey() {
   });
 }
 
-/** スマホアプリのトークルームから開いたときだけ本人名義で投稿できる */
-async function canPostToTalk() {
+/** 開いたトークの channelId。スマホアプリのトークルームから開いたときだけ取れ、そのトークにだけ本人名義で投稿できる */
+async function currentChannelId() {
   const os = woff.getOS();
-  if (os !== 'ios' && os !== 'android') return false;
+  if (os !== 'ios' && os !== 'android') return '';
   try {
     // 応答が返らない環境でも読み込み中で止まらないよう、3秒で諦める（そのときは文面コピーで対応）
     const timeout = new Promise((resolve) => { setTimeout(() => resolve(''), 3000); });
-    return Boolean(await Promise.race([woff.getChannelId(), timeout]));
+    return String((await Promise.race([woff.getChannelId(), timeout])) || '');
   } catch (_) {
-    return false;
+    return '';
   }
 }
 
@@ -271,7 +281,37 @@ function setupForm() {
   if (ACTIVITY === 'idou') setupIdou();
   if (ACTIVITY === 'chiryou') setupChiryou();
   if (ACTIVITY === 'sairan') setupSairan();
+  setupDest();
   applyFarm();
+}
+
+/**
+ * 確認の画面の投稿先。既定は開いたトーク（本人名義）。ほかのトーク（「投稿先」タブで名前の付いた、開いたことのあるトーク）は
+ * Bot 名義で投稿する。トーク以外から開いたときは前回選んだトークか「投稿しない（文面をコピー）」
+ */
+function setupDest() {
+  const sel = $('#dest');
+  sel.textContent = '';
+  const hereName = state.channel && state.channel.name;
+  if (state.canPost) sel.append(new Option(hereName ? `このトーク（${hereName}）` : 'このトーク', HERE));
+  state.destinations.forEach((c) => sel.append(new Option(c.name, c.channelId)));
+  if (!state.canPost) sel.append(new Option('トークに投稿しない（文面をコピーして貼る）', COPY));
+  const last = (loadSaved().dest || {})[ACTIVITY];
+  if (!state.canPost) sel.value = [...sel.options].some((o) => o.value === last) ? last : COPY;
+  $('#destField').hidden = sel.options.length < 2;
+  sel.addEventListener('change', showPostNote);
+  $('#farmnoteField').hidden = !INFO.farmnote;
+  $('#farmnoteHint').hidden = !INFO.farmnote;
+}
+
+function showPostNote() {
+  const v = $('#dest').value;
+  const name = ($('#dest').selectedOptions[0] || {}).textContent || '';
+  $('#postNote').textContent = v === HERE
+    ? '送信すると、スプレッドシートに保存し、このトークルームにあなたの名前で投稿します。'
+    : v === COPY || !v
+      ? 'スプレッドシートに保存します。トークへは、送信後に出る文面をコピーして貼ってください。'
+      : `送信すると、スプレッドシートに保存し、トーク「${name}」に Bot「FDP報告ボタン」の名前で投稿します（カードにあなたの名前が入ります）。`;
 }
 
 function isMultiCow() {
@@ -279,32 +319,63 @@ function isMultiCow() {
 }
 
 /**
- * 治療: 治療区分は前回と同じものを選んでおく。区分を選ぶと、いつもの組み合わせ（押すと薬と量が入る）と薬の候補をその区分のものに絞る。
+ * 治療: 治療区分は前回と同じものを選んでおく。区分・いつもの組み合わせ・薬は投薬の欄（drugBlock）。
  * 疾病名・体温・ステータスは区分が「治療」のときだけ出す
  */
 function setupChiryou() {
-  const kubuns = state.choices.chiryouKubun;
-  const last = loadSaved().chiryouKubun;
-  segment($('#cKubun'), 'cKubun', kubuns, kubuns.includes(last) ? last : kubuns[0]);
-  $$('#cKubun input').forEach((el) => el.addEventListener('change', applyKubun));
+  state.drugBlock = drugBlock($('#cDrugBlock'), {
+    kubuns: state.choices.chiryouKubun,
+    initial: loadSaved().chiryouKubun,
+    onKubun: applyChiryouDetail,
+  });
   fillSelect($('#cDisease'), state.diseases, 'なし（入れない）');
   $('#cDisease').append(new Option('その他（入力）', OTHER));
   $('#cDisease').addEventListener('change', () => {
     $('#cDiseaseOtherField').hidden = $('#cDisease').value !== OTHER;
   });
   segment($('#cStatus'), 'cStatus', state.choices.status, '');
-  $('#addDrug').addEventListener('click', () => addDrug());
-  applyKubun();
+  applyChiryouDetail();
 }
 
-/** 治療区分が変わったとき: いつもの組み合わせ・薬の候補・詳しい項目を出し直す（薬は空の1行に戻す） */
-function applyKubun() {
-  const kubun = value('cKubun');
-  $('#cDetail').hidden = kubun !== '治療';
-  const box = $('#cPresets');
+function applyChiryouDetail() {
+  $('#cDetail').hidden = state.drugBlock.kubun() !== '治療';
+}
+
+// ---------- 投薬の欄 ----------
+
+/**
+ * 投薬の欄（治療区分・いつもの組み合わせ・薬）を root に作る。治療のフォームのほか、分娩・疾病などに一緒に入れる投薬でも使う。
+ * kubuns: 選べる治療区分（1つなら区分の欄は隠す）、initial: 最初に選ぶ区分、onKubun: 区分を変えたときに呼ぶ。
+ * 区分を選ぶと、いつもの組み合わせ（押すと薬と量が入る）と薬の候補をその区分のものに絞る
+ */
+function drugBlock(root, { kubuns, initial, onKubun = () => {} }) {
+  const node = $('#drugBlockTpl').content.firstElementChild.cloneNode(true);
+  const key = `db${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+  const kubunBox = $('.db-kubun', node);
+  const block = {
+    node,
+    list: $('.db-list', node),
+    kubun: () => value(null, kubunBox),
+  };
+  segment(kubunBox, `${key}-kubun`, kubuns, kubuns.includes(initial) ? initial : kubuns[0]);
+  $('.db-kubun-box', node).hidden = kubuns.length < 2;
+  $$('input', kubunBox).forEach((el) => el.addEventListener('change', () => {
+    applyKubun(block);
+    onKubun(block.kubun());
+  }));
+  $('.db-add', node).addEventListener('click', () => addDrug(block));
+  root.append(node);
+  applyKubun(block);
+  return block;
+}
+
+/** 治療区分が変わったとき: いつもの組み合わせ・薬の候補を出し直す（薬は空の1行に戻す） */
+function applyKubun(block) {
+  const kubun = block.kubun();
+  const box = $('.db-presets', block.node);
   box.textContent = '';
   const presets = (state.presets || []).filter((p) => p.kubun === kubun);
-  $('#cPresetBox').hidden = !presets.length;
+  $('.db-preset-box', block.node).hidden = !presets.length;
   presets.forEach((p) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -312,22 +383,21 @@ function applyKubun() {
     b.textContent = p.label;
     b.addEventListener('click', () => {
       $$('.preset-btn', box).forEach((x) => x.classList.toggle('on', x === b));
-      $('#drugList').textContent = '';
-      p.drugs.forEach((d) => addDrug(d));
+      block.list.textContent = '';
+      p.drugs.forEach((d) => addDrug(block, d));
       state.pendingId = '';
     });
     box.append(b);
   });
-  $('#drugList').textContent = '';
-  addDrug();
+  block.list.textContent = '';
+  addDrug(block);
 }
 
 /**
  * 治療区分で絞った薬の候補。「薬」タブは区分ごとに使われやすい順に並んでいるので、その順のまま出す
  * （治療区分の列が空の薬はどの区分でも出す）
  */
-function drugsForKubun() {
-  const kubun = value('cKubun');
+function drugsForKubun(kubun) {
   const seen = new Set();
   return state.drugs.filter((d) => {
     if (d.kubun && d.kubun.length && !d.kubun.includes(kubun)) return false;
@@ -338,8 +408,7 @@ function drugsForKubun() {
 }
 
 /** 薬の行（いつもの量・単位・投薬区分）。同じ薬でも区分で量が違うことがあるので、選んでいる区分の行を先に見る */
-function findDrug(name) {
-  const kubun = value('cKubun');
+function findDrug(name, kubun) {
   return state.drugs.find((x) => x.name === name && (x.kubun || []).includes(kubun))
     || state.drugs.find((x) => x.name === name);
 }
@@ -348,12 +417,12 @@ function findDrug(name) {
  * 薬の1行: 薬を選ぶと、いつもの量・単位・投薬区分が入る。単位と投薬区分は文字で出し、投薬区分は押すと選び直せる。
  * 無い薬は「その他（入力）」で名前・単位・投薬区分を入れる。preset（いつもの組み合わせの薬）があればそれで埋める
  */
-function addDrug(preset) {
-  const list = $('#drugList');
+function addDrug(block, preset) {
+  const list = block.list;
   if (list.children.length >= MAX_DRUGS) return;
   const node = $('#drugTpl').content.firstElementChild.cloneNode(true);
   const nameEl = $('.d-name', node);
-  const names = drugsForKubun().map((d) => d.name);
+  const names = drugsForKubun(block.kubun()).map((d) => d.name);
   if (preset && !names.includes(preset.name)) names.push(preset.name);
   fillSelect(nameEl, names, '薬を選ぶ');
   nameEl.append(new Option('その他（入力）', OTHER));
@@ -382,14 +451,14 @@ function addDrug(preset) {
     $('.d-unit-label', node).hidden = other;
     routeSel.hidden = !other;
     routeBtn.hidden = other;
-    const d = findDrug(nameEl.value);
+    const d = findDrug(nameEl.value, block.kubun());
     $('.d-qty', node).value = d ? d.qty : '';
     setUnit(d ? d.unit : '');
     setRoute(d ? d.route : '');
   });
   $('.d-del', node).addEventListener('click', () => {
     node.remove();
-    renumberDrugs();
+    renumberDrugs(block);
     state.pendingId = '';
   });
   list.append(node);
@@ -403,13 +472,39 @@ function addDrug(preset) {
   } else {
     setRoute('');
   }
-  renumberDrugs();
+  renumberDrugs(block);
 }
 
-function renumberDrugs() {
-  const nodes = $$('#drugList .drug');
+function renumberDrugs(block) {
+  const nodes = $$('.drug', block.list);
   nodes.forEach((n) => { $('.d-del', n).hidden = nodes.length === 1; });
-  $('#addDrug').hidden = nodes.length >= MAX_DRUGS;
+  $('.db-add', block.node).hidden = nodes.length >= MAX_DRUGS;
+}
+
+/** 投薬の欄の薬（名前か量が入っている行だけ。その他（入力）の薬は入れた名前・単位） */
+function collectDrugs(block) {
+  return $$('.drug', block.list).map((n) => ({
+    name: $('.d-name', n).value === OTHER ? $('.d-other', n).value.trim() : $('.d-name', n).value,
+    qty: $('.d-qty', n).value.trim(),
+    unit: $('.d-unit', n).value.trim(),
+    route: $('.d-route', n).value,
+  })).filter((d) => d.name || d.qty);
+}
+
+/** 投薬の欄のチェック: 治療区分と薬（1つ以上。その他は名前を入れる。量は数字） */
+function validateDrugBlock(block, drugs, bad) {
+  if (!block.kubun()) bad($('.db-kubun', block.node), '治療区分を選んでください');
+  const nodes = $$('.drug', block.list);
+  if (!drugs.length) bad($('.d-name', nodes[0]), '薬を選んでください');
+  nodes.forEach((n, i) => {
+    const no = nodes.length > 1 ? `薬${i + 1}` : '薬';
+    const sel = $('.d-name', n);
+    const name = sel.value === OTHER ? $('.d-other', n).value.trim() : sel.value;
+    const qty = $('.d-qty', n).value.trim();
+    if (!name && qty) bad(sel.value === OTHER ? $('.d-other', n) : sel, `${no}を選んでください`);
+    if (sel.value === OTHER && !name) bad($('.d-other', n), `${no}の名前を入れてください`);
+    if (qty && !(Number(qty) > 0)) bad($('.d-qty', n), `${no}の量を確認してください`);
+  });
 }
 
 /** 採卵の処置: 「採卵の処置」タブの処置を区分（OPU・体内採卵）ごとのボタンで出す。選ぶと使う薬が下に出る */
@@ -904,23 +999,19 @@ function collect() {
     };
   }
   if (ACTIVITY === 'chiryou') {
-    const detail = value('cKubun') === '治療';
+    const kubun = state.drugBlock.kubun();
+    const detail = kubun === '治療';
     return {
       ...base,
       damTag: '',
       damId: '',
       cows: $$('#cowList .m-cow').map(readCowRow).filter(Boolean),
-      kubun: value('cKubun'),
+      kubun,
       // 疾病名・体温・ステータスは「治療」のときだけ（ほかの区分では隠れているので送らない）
       disease: !detail ? '' : $('#cDisease').value === OTHER ? $('#cDiseaseOther').value.trim() : $('#cDisease').value,
       temp: detail ? $('#cTemp').value.trim() : '',
       status: detail ? value('cStatus') : '',
-      drugs: $$('#drugList .drug').map((n) => ({
-        name: $('.d-name', n).value === OTHER ? $('.d-other', n).value.trim() : $('.d-name', n).value,
-        qty: $('.d-qty', n).value.trim(),
-        unit: $('.d-unit', n).value.trim(),
-        route: $('.d-route', n).value,
-      })).filter((d) => d.name || d.qty),
+      drugs: collectDrugs(state.drugBlock),
       memo: $('#cMemo').value.trim(),
     };
   }
@@ -1026,19 +1117,8 @@ function validateMoves(r, bad) {
 /** 治療: 牛・治療区分・薬（1つ以上。その他は名前を入れる）。体温は入れたときだけ範囲を見る */
 function validateChiryou(r, bad) {
   checkCowRows($$('#cowList .m-cow'), bad, new Set(), '');
-  if (!r.kubun) bad($('#cKubun'), '治療区分を選んでください');
+  validateDrugBlock(state.drugBlock, r.drugs, bad);
   if (r.kubun === '治療' && $('#cDisease').value === OTHER && !r.disease) bad($('#cDiseaseOther'), '疾病名を入れてください（無ければ「なし」）');
-  const nodes = $$('#drugList .drug');
-  if (!r.drugs.length) bad($('.d-name', nodes[0]), '薬を選んでください');
-  nodes.forEach((n, i) => {
-    const no = nodes.length > 1 ? `薬${i + 1}` : '薬';
-    const sel = $('.d-name', n);
-    const name = sel.value === OTHER ? $('.d-other', n).value.trim() : sel.value;
-    const qty = $('.d-qty', n).value.trim();
-    if (!name && qty) bad(sel.value === OTHER ? $('.d-other', n) : sel, `${no}を選んでください`);
-    if (sel.value === OTHER && !name) bad($('.d-other', n), `${no}の名前を入れてください`);
-    if (qty && !(Number(qty) > 0)) bad($('.d-qty', n), `${no}の量を確認してください`);
-  });
   if (r.temp && !(Number(r.temp) >= 35 && Number(r.temp) <= 43)) bad($('#cTemp'), '体温を確認してください（35〜43℃）');
 }
 
@@ -1080,9 +1160,7 @@ function toConfirm() {
   if (!state.pendingId) state.pendingId = newId();
   state.report = r;
   $('#preview').textContent = buildMessage(r, '送信時刻');
-  $('#postNote').textContent = state.canPost
-    ? '送信すると、スプレッドシートに保存し、このトークルームにあなたの名前で投稿します。'
-    : 'スプレッドシートに保存します。トークへは、送信後に出る文面をコピーして貼ってください。';
+  showPostNote();
   $('#sendError').hidden = true;
   showView('confirm');
 }
@@ -1094,12 +1172,25 @@ async function send() {
   $('#back').disabled = true;
   $('#next').textContent = '送信中…';
   $('#sendError').hidden = true;
+  const id = state.pendingId;
+  const destValue = $('#dest').value;
+  const dest = destValue === HERE ? { channelId: state.channelId, via: 'woff' }
+    : destValue && destValue !== COPY ? { channelId: destValue, via: 'bot' } : null;
+  const destName = ($('#dest').selectedOptions[0] || {}).textContent || '';
   try {
-    const res = await api('submit', { report: { ...state.report, id: state.pendingId } });
+    const res = await api('submit', {
+      report: {
+        ...state.report,
+        id,
+        farmnote: !INFO.farmnote || $('#farmnote').checked,
+        inputMethod: '手だけ',
+        dest,
+      },
+    });
     // 時刻はシートに記録された送信時刻を使う
     const report = state.report;
     const message = buildMessage(report, res.time);
-    remember(report);
+    remember(report, destValue);
     state.pendingId = '';
     $('#doneMessage').textContent = message;
     $('#copyBox').hidden = true;
@@ -1107,10 +1198,13 @@ async function send() {
     $('#doneText').textContent = res.duplicate ? '送信済みでした' : `保存しました（${res.rows}行）`;
     if (res.duplicate) {
       $('#doneNote').textContent = 'この内容は送信済みでした（二重には保存していません）';
-    } else if (state.canPost) {
+    } else if (dest && dest.via === 'woff') {
       // 保存できた時点で完了画面を出し、トークへの投稿はその後に続ける
       $('#doneNote').textContent = 'スプレッドシートに保存しました。トークに投稿しています…';
       postToTalk(report, res.time, message);
+    } else if (dest) {
+      $('#doneNote').textContent = `スプレッドシートに保存しました。トーク「${destName}」に投稿しています…`;
+      postViaBot(report, id, dest.channelId, destName, res.time);
     } else {
       $('#doneNote').textContent = 'スプレッドシートに保存しました。トークへは下の文面を貼ってください';
       $('#copyBox').hidden = false;
@@ -1137,6 +1231,22 @@ async function postToTalk(report, time, message) {
     $('#doneNote').textContent = 'スプレッドシートに保存し、トークにも投稿しました';
   } catch (_) {
     $('#doneNote').textContent = 'トークへの投稿に失敗しました（スプレッドシートには保存済み）。下の文面を貼ってください';
+    $('#copyBox').hidden = false;
+  } finally {
+    state.posting = false;
+    $('#back').disabled = false;
+  }
+}
+
+/** ほかのトークに Bot「FDP報告ボタン」名義で投稿する（Apps Script が送る。カードに「報告: 名前」が入る） */
+async function postViaBot(report, id, channelId, name, time) {
+  state.posting = true;
+  $('#back').disabled = true;
+  try {
+    await api('post', { activity: report.activity, id, channelId, flex: buildFlex(report, time) });
+    $('#doneNote').textContent = `スプレッドシートに保存し、トーク「${name}」にも投稿しました`;
+  } catch (e) {
+    $('#doneNote').textContent = `${e.message}（スプレッドシートには保存済み）。下の文面を貼ってください`;
     $('#copyBox').hidden = false;
   } finally {
     state.posting = false;
@@ -1183,6 +1293,7 @@ function resetForNext() {
     $('#cowList').textContent = '';
     addCowRow();
   }
+  $('#farmnote').checked = true; // Farmnote に登録するかは報告ごとに選ぶ（既定は登録する）
   state.pendingId = '';
   showView('form');
   window.scrollTo(0, 0);
@@ -1477,12 +1588,13 @@ function loadSaved() {
   }
 }
 
-/** 次回のために牧場と作業者を覚えておく（端末ごと） */
-function remember(r) {
+/** 次回のために牧場・作業者・投稿先を覚えておく（端末ごと。投稿先はトーク以外から開いたときの既定にする） */
+function remember(r, dest) {
   try {
     const saved = loadSaved();
     saved.farm = r.farm;
     saved.workers = { ...(saved.workers || {}), [r.farm]: r.worker };
+    if (dest && dest !== HERE) saved.dest = { ...(saved.dest || {}), [r.activity]: dest };
     if (r.activity === 'chiryou') saved.chiryouKubun = r.kubun; // 次に開いたとき同じ治療区分を選んでおく
     localStorage.setItem(STORE_KEY, JSON.stringify(saved));
   } catch (_) {
