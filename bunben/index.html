@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>報告</title>
+<!-- 受け口（Apps Script）へは開いてすぐ送るので、先につないでおく -->
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <style>
   :root {
     --bg: #f3f4f1;
@@ -200,6 +203,7 @@
   </section>
 
   <form id="form" novalidate hidden>
+    <p id="configNotice" class="notice" hidden></p>
     <!-- まとめて話す: 一度に話すと、話した項目がフォームに入る（手で入れた項目は変えない）。足りない・誤りは手で直す -->
     <section class="card" id="voiceCard" hidden>
       <button type="button" id="voiceBtn" class="voice-btn">🎤 まとめて話す</button>
@@ -215,7 +219,8 @@
         <details><summary>話した内容（文字起こし）</summary><p id="transcript" class="preview"></p></details>
       </div>
       <details id="voiceTextBox">
-        <summary>文字で入れる（キーボードの音声入力など）</summary>
+        <summary>キーボードのマイクで話す（マイクの許可を聞かれません）</summary>
+        <p class="hint">下の欄をタップし、キーボードのマイク（iPhone はキーボードの右下、Android は Gboard の右上）を押して話し、「この文で入れる」を押してください。打ち込んでも同じです</p>
         <textarea id="voiceText" rows="3" placeholder="例: ネの446番、右後ろの乳房炎、体温39.5度"></textarea>
         <button type="button" id="voiceTextBtn" class="small" style="width:100%;margin-top:8px">この文で入れる</button>
       </details>
@@ -538,6 +543,6 @@
 
 <script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>
 <!-- ?v= は app.js の APP_VERSION と同じ値にする（スマホが古い app.js を使い回さないように） -->
-<script src="app.js?v=2026-10-22e"></script>
+<script src="app.js?v=2026-10-22f"></script>
 </body>
 </html>

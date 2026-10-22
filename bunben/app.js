@@ -8,7 +8,7 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // index.html の app.js?v=… も同じ値にそろえる（古いファイルを使い回させないため）
-const APP_VERSION = '2026-10-22e';
+const APP_VERSION = '2026-10-22f';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
@@ -117,7 +117,8 @@ const state = {
   boardsLoaded: false, // 掲示板の一覧を読み終えたか（引き継ぎの投稿先の案内に使う）
   txBlock: null, // 一緒に入れる投薬の欄
   // 声で入れた結果（送信のときに要確認・文字起こしとして送る）
-  voice: { used: false, transcript: '', uncertain: [], recorder: null, chunks: [], timer: null, busy: false },
+  voice: { used: false, transcript: '', uncertain: [], recorder: null, chunks: [], timer: null, busy: false, stream: null, micTimer: null },
+  configKey: '', // 開いたときの設定（裏で読んだ新しい設定と比べる）
   presets: [],
   canPost: false,
   channelId: '', // 開いたトーク（スマホアプリのトークから開いたときだけ）
@@ -153,14 +154,25 @@ async function start() {
     state.channelId = await currentChannelId();
     state.canPost = Boolean(state.channelId);
   }
+  // 設定は前回この端末で読んだものを使ってすぐにフォームを出し、新しい設定は裏で読む（Apps Script の返事は1.5〜8秒かかる）。
+  // 新しい設定は次に開いたときから使い、変わっていたらフォームの上で知らせる。初めての端末・試行モード・管理画面は待って読む
+  const cached = TRIAL || PARAMS.get('admin') ? null : readConfigCache();
+  const fresh = api('config', { channelId: state.channelId });
   let res;
-  try {
-    res = await api('config', { channelId: state.channelId });
-  } catch (e) {
-    if (TRIAL) writeStore(TRIAL_KEY_STORE, ''); // キーが違うときは次に開いたとき聞き直す
-    throw e;
+  if (cached) {
+    res = cached;
+    fresh.then(onFreshConfig, onFreshConfigError);
+  } else {
+    try {
+      res = await fresh;
+    } catch (e) {
+      if (TRIAL) writeStore(TRIAL_KEY_STORE, ''); // キーが違うときは次に開いたとき聞き直す
+      throw e;
+    }
+    if (!TRIAL) saveConfigCache(res);
   }
   if (TRIAL) writeStore(TRIAL_KEY_STORE, state.trialKey);
+  state.configKey = configKey(res);
   state.user = res.user;
   state.farms = res.farms;
   state.diseases = res.diseases || [];
@@ -359,6 +371,8 @@ function setupForm() {
  */
 function setupDest() {
   const sel = $('#dest');
+  const boards = $('optgroup', sel);
+  const cur = sel.value;
   sel.textContent = '';
   const hereName = state.channel && state.channel.name;
   if (state.canPost) sel.append(new Option(hereName ? `このトーク（${hereName}）` : 'このトーク', HERE));
@@ -366,8 +380,10 @@ function setupDest() {
   if (!state.canPost) sel.append(new Option('トークに投稿しない（文面をコピーして貼る）', COPY));
   const last = (loadSaved().dest || {})[ACTIVITY];
   if (!state.canPost) sel.value = [...sel.options].some((o) => o.value === last) ? last : COPY;
+  if (boards) sel.append(boards);
+  if (cur && [...sel.options].some((o) => o.value === cur)) sel.value = cur;
   // 候補が1つでも出す（どこに投稿されるかを確認の画面で見られるように）
-  sel.addEventListener('change', showPostNote);
+  sel.onchange = showPostNote;
   $('#farmnoteField').hidden = !INFO.farmnote;
   $('#farmnoteHint').hidden = !INFO.farmnote;
 }
@@ -2058,6 +2074,36 @@ function setupVoice() {
   });
 }
 
+/**
+ * マイク。LINE WORKS の中のブラウザはマイクの許可を覚えないので、取るたびに許可を聞かれる。
+ * 同じフォームで続けて話すときに聞き直さないよう、最後に話してから2分は開いたままにする（その間はマイク使用中の印が出る）
+ */
+const MIC_KEEP_MS = 2 * 60 * 1000;
+async function micStream() {
+  const v = state.voice;
+  clearTimeout(v.micTimer);
+  if (v.stream && v.stream.getAudioTracks().some((t) => t.readyState === 'live')) return v.stream;
+  v.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  return v.stream;
+}
+
+function releaseMicLater() {
+  const v = state.voice;
+  clearTimeout(v.micTimer);
+  v.micTimer = setTimeout(releaseMic, MIC_KEEP_MS);
+}
+
+function releaseMic() {
+  const v = state.voice;
+  clearTimeout(v.micTimer);
+  if (v.stream) v.stream.getTracks().forEach((t) => t.stop());
+  v.stream = null;
+}
+
+// 画面を離れたら（閉じた・ほかのアプリへ）マイクを放す
+window.addEventListener('pagehide', releaseMic);
+document.addEventListener('visibilitychange', () => { if (document.hidden && !state.voice.recorder) releaseMic(); });
+
 /** 押すと録音を始め、もう一度押すと止めて送る（3分で自動で止める） */
 async function toggleRecording() {
   const v = state.voice;
@@ -2073,7 +2119,7 @@ async function toggleRecording() {
   }
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    stream = await micStream();
   } catch (_) {
     voiceStatus('マイクを使えませんでした。「文字で入れる」でキーボードの音声入力を使ってください');
     $('#voiceTextBox').open = true;
@@ -2085,7 +2131,7 @@ async function toggleRecording() {
   v.chunks = [];
   rec.ondataavailable = (e) => { if (e.data && e.data.size) v.chunks.push(e.data); };
   rec.onstop = async () => {
-    stream.getTracks().forEach((t) => t.stop());
+    releaseMicLater();
     clearInterval(v.timer);
     v.recorder = null;
     $('#voiceBtn').classList.remove('rec');
@@ -2603,6 +2649,71 @@ function today() {
 function newId() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+// ---------- 端末に残す設定（すぐにフォームを出すため） ----------
+
+const CONFIG_STORE = MOCK ? 'fdp-config-mock' : 'fdp-config';
+// 投稿先（開いたトークの名前・ほかのトーク）はトークごと。それ以外の設定は人ごと
+const CHANNEL_KEYS = ['channel', 'destinations'];
+
+/** 前回この端末で読んだ設定。同じ人・同じ画面の版のときだけ使う（画面を直した版では読み直す） */
+function readConfigCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CONFIG_STORE) || 'null');
+    if (!c || c.appVersion !== APP_VERSION || c.userId !== state.profile.userId || !c.res || !(c.res.farms || []).length) return null;
+    const ch = (c.channels || {})[state.channelId || ''] || {
+      channel: state.channelId ? { channelId: state.channelId, name: '' } : null, destinations: [],
+    };
+    return Object.assign({}, c.res, ch);
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveConfigCache(res) {
+  try {
+    const prev = JSON.parse(localStorage.getItem(CONFIG_STORE) || 'null');
+    const same = prev && prev.appVersion === APP_VERSION && prev.userId === state.profile.userId;
+    const rest = Object.assign({}, res);
+    CHANNEL_KEYS.forEach((k) => delete rest[k]);
+    delete rest.ok;
+    const channels = Object.assign({}, same ? prev.channels : {}, { [state.channelId || '']: { channel: res.channel || null, destinations: res.destinations || [] } });
+    localStorage.setItem(CONFIG_STORE, JSON.stringify({ appVersion: APP_VERSION, userId: state.profile.userId, savedAt: Date.now(), res: rest, channels }));
+  } catch (_) {
+    // 残せなくても次に開いたときに待って読むだけ
+  }
+}
+
+/** フォームの中身に関わる設定（投稿先と入力者以外）。変わったかを比べる */
+function configKey(res) {
+  const rest = Object.assign({}, res);
+  ['ok', 'user', ...CHANNEL_KEYS].forEach((k) => delete rest[k]);
+  return JSON.stringify(rest);
+}
+
+/** 裏で読んだ新しい設定。次に開いたときのために残し、投稿先と入力者はいまのフォームにも入れる。ほかが変わっていたら知らせる */
+function onFreshConfig(res) {
+  saveConfigCache(res);
+  state.user = res.user;
+  const dest = JSON.stringify([res.channel || null, res.destinations || []]);
+  if (dest !== JSON.stringify([state.channel, state.destinations])) {
+    state.channel = res.channel || null;
+    state.destinations = res.destinations || [];
+    if (state.view === 'form') setupDest();
+  }
+  if (configKey(res) !== state.configKey) {
+    $('#configNotice').textContent = '設定（作業者・牛群・薬など）が新しくなりました。このまま送れますが、いったん閉じて開き直すと新しい選択肢になります';
+    $('#configNotice').hidden = false;
+  }
+}
+
+/** 裏で読めなかったとき。電波が悪いだけならそのまま。本人確認などで断られたら知らせる（送るときにも同じ理由で止まる） */
+function onFreshConfigError(e) {
+  const msg = (e && e.message) || '';
+  if (!msg || msg.startsWith('通信できませんでした')) return;
+  $('#configNotice').textContent = msg;
+  $('#configNotice').hidden = false;
 }
 
 function readStore(key) {
