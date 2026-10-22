@@ -542,7 +542,13 @@
 </template>
 
 <script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>
-<!-- ?v= は app.js の APP_VERSION と同じ値にする（スマホが古い app.js を使い回さないように） -->
-<script src="app.js?v=2026-10-22f"></script>
+<!-- 画面のファイル。この順に読む（後のファイルが前のファイルの関数を使う）。
+     ?v= は app.js の APP_VERSION と同じ値にする（スマホが古いファイルを使い回さないように。tools/check_woff.mjs で確かめる） -->
+<script src="util.js?v=2026-10-22g"></script>
+<script src="parts.js?v=2026-10-22g"></script>
+<script src="reports.js?v=2026-10-22g"></script>
+<script src="form.js?v=2026-10-22g"></script>
+<script src="voice.js?v=2026-10-22g"></script>
+<script src="app.js?v=2026-10-22g"></script>
 </body>
 </html>
