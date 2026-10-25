@@ -20,9 +20,12 @@
 //       c は cow（牛）・day（「10月22日」）・isToday・time（送信時刻）・tail（メモ・作業者・投薬の共通の行）・oneLine（改行を空白に）
 //   voice(f, h): 声の結果 f を欄に入れる（h は put・putText・pick・pickMany と要確認の notes）
 //   remember(saved, r): 次に開いたときのために覚える  onBoards(): 掲示板の一覧を読んだあと  sayItems(): 話す順を作る
+//   onFarm(): 牧場を選び直したとき（牧場ごとの候補を出し直す）
 //   boardFirst: 投稿先の既定を掲示板にする（前回選んだ掲示板、無ければ名前にこの語が入った掲示板）
 
 const TIME_KINDS = [['found', '生まれていた（子牛発見時刻）'], ['birth', '分娩に立ち会った（分娩時刻）']];
+// バンカーの餌の変更で、変更後の餌が無くてよい変更内容（Apps Script の BUNKER_EMPTIED と同じ。tools/check_woff.mjs で確かめる）
+const BUNKER_EMPTIED = '使い切り（空になった）';
 
 // 治療（アブレスト以外）と予防的投与は同じ欄（予防的投与は区分が決まっている）
 const TREATMENT_REPORT = {
@@ -501,6 +504,54 @@ const REPORTS = {
       return t ? t.items.map((it) => [it.name, it.type === '選択' || it.type === '複数選択' ? it.options.map((o) => o.split('：')[0]).slice(0, 4).join('・') : it.note]) : [];
     },
   },
+
+  // バンカーの餌の変更: Farmnote の活動ではない（「バンカー餌変更」タブに1変更1行）。牛の欄は無い。
+  // バンカー・餌は「バンカー」「餌」タブに候補があればタップで入る（無くても自由に入れる）
+  bunker: {
+    title: 'バンカーの餌の変更', cow: '', date: '変更日', color: '#a16207', farmnote: false,
+    example: '例「2番バンカー、一番草から二番草サイレージに切り替え。8時10分」',
+    say: ['バンカー（2番バンカー）', '変更内容（切り替え・詰め込み開始・使い切り）', '変更前の餌と変更後の餌（一番草から二番草に）', '時刻（わかれば）'],
+    setup: setupBunker,
+    collect: (base) => ({
+      ...base,
+      damTag: '',
+      damId: '',
+      bunker: $('#bBunker').value.trim(),
+      time: $('#bTime').value,
+      change: value('bChange'),
+      before: $('#bBefore').value.trim(),
+      after: $('#bAfter').value.trim(),
+      memo: $('#bMemo').value.trim(),
+    }),
+    validate(r, bad) {
+      if (!r.bunker) bad($('#bBunker'), 'バンカーを入れてください');
+      if (!r.change) bad($('#bChange'), '変更内容を選んでください');
+      else if (r.change !== BUNKER_EMPTIED && !r.after) bad($('#bAfter'), '変更後の餌を入れてください');
+    },
+    reset() {
+      // 続けて別のバンカーを入れることが多いので、日付・作業者は残し、ほかは空にする（変更内容は最初の「餌の切り替え」に戻す）
+      ['#bBunker', '#bBefore', '#bAfter', '#bTime', '#bMemo'].forEach((s) => { $(s).value = ''; });
+      check('bChange', (state.choices.bunkerChange || [])[0]);
+      applyBunkerChange();
+      renderBunkerChips();
+    },
+    card(r, c) {
+      const rows = [['バンカー', r.bunker], ['変更', r.change]];
+      if (r.before || r.after) rows.push(['餌', `${r.before || '（未記入）'} → ${r.after || '（なし）'}`]);
+      // 今日なら時刻（入れた時刻か送信した時刻）、後から報告したときは日付（と入れた時刻）
+      rows.push(c.isToday ? ['時刻', r.time || c.time] : ['日付', [c.day, r.time].filter(Boolean).join(' ')]);
+      return { title: 'バンカーの餌の変更', rows: rows.concat(c.tail) };
+    },
+    voice(f, h) {
+      h.put($('#bBunker'), f.bunker, 'バンカー');
+      h.pick($('#bChange'), f.change, '変更内容');
+      h.put($('#bBefore'), f.before, '変更前の餌');
+      h.put($('#bAfter'), f.after, '変更後の餌');
+      h.put($('#bTime'), f.time, '時刻');
+      h.putText($('#bMemo'), f.memo);
+    },
+    onFarm: () => renderBunkerChips(),
+  },
 };
 
 // ---------- 種類ごとの欄の作り ----------
@@ -636,6 +687,50 @@ function setupHikitsugi() {
   segment($('#hTarget'), 'hTarget', names, names.includes(last) ? last : names[0] || '');
   $$('#hTarget input').forEach((el) => el.addEventListener('change', renderHandover));
   renderHandover();
+}
+
+/** バンカーの餌の変更: 変更内容のボタン（最初は「餌の切り替え」）と、バンカー・餌の候補のボタン（入れている文字に合うもの） */
+function setupBunker() {
+  const changes = state.choices.bunkerChange || [];
+  segment($('#bChange'), 'bChange', changes, changes[0] || '');
+  $$('#bChange input').forEach((el) => el.addEventListener('change', applyBunkerChange));
+  [['#bBunker', '#bBunkerHits', 'bunkers'], ['#bBefore', '#bBeforeHits', 'feeds'], ['#bAfter', '#bAfterHits', 'feeds']].forEach(([input, box, key]) => {
+    ['input', 'focus'].forEach((ev) => $(input).addEventListener(ev, () => candidateChips($(input), $(box), key)));
+  });
+  applyBunkerChange();
+  renderBunkerChips();
+}
+
+/** 使い切り（空になった）のときは変更後の餌が無くてよい */
+function applyBunkerChange() {
+  $('#bAfterLabel').classList.toggle('req', value('bChange') !== BUNKER_EMPTIED);
+}
+
+/** バンカーの候補を出し、餌の候補は閉じる（牧場を選び直したとき・続けて入力するとき） */
+function renderBunkerChips() {
+  candidateChips($('#bBunker'), $('#bBunkerHits'), 'bunkers');
+  ['#bBeforeHits', '#bAfterHits'].forEach((s) => { $(s).textContent = ''; });
+}
+
+/** 今の牧場の候補（「バンカー」「餌」タブ）のうち、入れている文字に合うものをボタンで出す（8つまで）。押すとその名前が入る */
+function candidateChips(input, box, key) {
+  box.textContent = '';
+  const farm = currentFarm();
+  const q = normalize(input.value);
+  ((farm && farm[key]) || []).filter((name) => !q || (normalize(name).includes(q) && normalize(name) !== q)).slice(0, 8).forEach((name) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = name;
+    b.addEventListener('click', () => {
+      input.value = name;
+      input.dataset.touched = '1';
+      input.classList.remove('invalid');
+      box.textContent = '';
+      state.pendingId = '';
+    });
+    box.append(b);
+  });
 }
 
 // ---------- 種類ごとの入力チェック・カード ----------

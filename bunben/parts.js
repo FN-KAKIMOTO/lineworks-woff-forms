@@ -29,6 +29,7 @@ function applyFarm() {
   $$('#calves .calf').forEach(renderOwners);
   $$('#moveGroups .mgroup').forEach(renderGroups);
   if (INFO.herdLabel) renderHerdSelect();
+  if (INFO.onFarm) INFO.onFarm();
   showDamHits();
 }
 
