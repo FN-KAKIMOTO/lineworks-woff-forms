@@ -168,6 +168,16 @@
   /* 引き継ぎの長い選択肢（「月曜：窒素補充、削蹄リスト送付」など）は折り返して1行ずつ */
   .seg.seg-wrap label { flex: 1 1 100%; }
   .seg.seg-wrap span { white-space: normal; text-align: left; min-height: 48px; padding: 10px 12px; font-size: 16px; }
+  /* 薬品在庫: 品目ごとに数を入れる。MIN を下回った品目は赤くして補充の数を出す */
+  .z-item { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .z-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .z-head { display: flex; align-items: center; gap: 8px; }
+  .z-name { flex: 1; min-width: 0; font-size: 16px; line-height: 1.3; }
+  .z-name small { display: block; font-size: 12px; color: var(--muted); }
+  .z-count { flex: 0 0 92px; min-height: 48px; padding: 8px 10px; text-align: right; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .z-unit { flex: 0 0 auto; min-width: 20px; color: var(--muted); }
+  .z-item.low .z-count { border-color: var(--danger); background: var(--danger-weak); }
+  .z-need { margin: 4px 0 0; font-size: 13px; color: var(--danger); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -407,6 +417,19 @@
       </section>
     </div>
 
+    <!-- 薬品在庫の確認（週1回。Farmnote の活動ではない）。品目は「薬品在庫の品目」タブ。区分ごとのカードに品目を並べる（stockItemTpl） -->
+    <div id="zaikoFields" hidden>
+      <section class="card" id="zPlaceCard">
+        <div class="field"><span class="label req">置き場所</span><div id="zPlace" class="seg"></div></div>
+      </section>
+      <p class="hint" style="margin:0 0 8px">残っている数（未使用）を入れてください。MIN を下回った品目は赤くなり、トークに補充の依頼として出ます</p>
+      <p id="zProgress" class="notice" style="margin:0 0 8px"></p>
+      <div id="zItems"></div>
+      <section class="card">
+        <label class="field"><span>メモ</span><textarea id="zMemo" rows="2" placeholder="例: セフロキシム 希望から2本借りた"></textarea></label>
+      </section>
+    </div>
+
     <!-- どこの牛群で起きたか（疾病・乳房炎・応急削蹄の依頼）。シートの「発生牛群」列に残す -->
     <section class="card" id="herdCard" hidden>
       <label class="field"><span class="req" id="herdLabel">発生した牛群</span><select id="herd"></select></label>
@@ -525,6 +548,18 @@
   </div>
 </template>
 
+<!-- 薬品在庫の1品目（名前・規格と MIN・MAX・数の欄・単位。MIN を下回ると補充の数が下に出る） -->
+<template id="stockItemTpl">
+  <div class="z-item">
+    <div class="z-head">
+      <div class="z-name"><span class="z-label"></span><small class="z-spec"></small></div>
+      <input class="z-count" type="number" inputmode="numeric" min="0" step="1" enterkeyhint="next" autocomplete="off">
+      <span class="z-unit"></span>
+    </div>
+    <p class="z-need" hidden></p>
+  </div>
+</template>
+
 <!-- 投薬の欄（治療区分・いつもの組み合わせ・薬）。治療のフォームのほか、分娩・疾病などに一緒に入れる投薬でも使う -->
 <template id="drugBlockTpl">
   <div class="drug-block">
@@ -561,11 +596,11 @@
 <script src="https://static.worksmobile.net/static/wm/woff/edge/3.7.4/sdk.js"></script>
 <!-- 画面のファイル。この順に読む（後のファイルが前のファイルの関数を使う）。
      ?v= は app.js の APP_VERSION と同じ値にする（スマホが古いファイルを使い回さないように。tools/check_woff.mjs で確かめる） -->
-<script src="util.js?v=2026-10-25a"></script>
-<script src="parts.js?v=2026-10-25a"></script>
-<script src="reports.js?v=2026-10-25a"></script>
-<script src="form.js?v=2026-10-25a"></script>
-<script src="voice.js?v=2026-10-25a"></script>
-<script src="app.js?v=2026-10-25a"></script>
+<script src="util.js?v=2026-10-25b"></script>
+<script src="parts.js?v=2026-10-25b"></script>
+<script src="reports.js?v=2026-10-25b"></script>
+<script src="form.js?v=2026-10-25b"></script>
+<script src="voice.js?v=2026-10-25b"></script>
+<script src="app.js?v=2026-10-25b"></script>
 </body>
 </html>

@@ -552,6 +552,56 @@ const REPORTS = {
     },
     onFarm: () => renderBunkerChips(),
   },
+
+  // 薬品在庫の確認（週1回）: 置き場所の品目（「薬品在庫の品目」タブ）をすべて数えて入れる。Farmnote の活動ではない（「薬品在庫」タブに1品目1行）。
+  // MIN を下回った品目は赤くなり、トークのカードに MAX までの補充の数が出る
+  zaiko: {
+    title: '薬品在庫の確認', cow: '', date: '確認日', color: '#0e7490', farmnote: false,
+    example: '例「セフロキシム22、セファゼット12、タイニーPK 9、シリンジ5ml 80」',
+    say: ['品目と残りの数を、数えた順に（セフロキシム22、タイニーPK 9）', '無い品目は「ゼロ」', 'メモ（希望から借りた薬など）'],
+    setup: setupZaiko,
+    collect: (base) => ({
+      ...base,
+      damTag: '',
+      damId: '',
+      place: value('zPlace'),
+      counts: $$('#zItems .z-item').map((node) => ({ name: node.dataset.name, count: $('.z-count', node).value.trim() })),
+      memo: $('#zMemo').value.trim(),
+    }),
+    validate: validateZaiko,
+    reset() {
+      // 次の置き場所を続けて数えることがあるので、置き場所・日付・作業者は残し、数とメモを空にする
+      $$('#zItems .z-count').forEach((el) => { el.value = ''; });
+      $('#zMemo').value = '';
+      renderStockState();
+    },
+    card(r, c) {
+      const counted = stockCounted(r);
+      const need = counted.filter((x) => x.need);
+      // 補充が要る品目だけを1行ずつ（「タイニーPK：残り9本 → 21本補充」）。ほかは数だけ
+      const rows = need.map((x) => [x.name, `残り${x.count}${x.unit}${x.refill !== null ? ` → ${x.refill}${x.unit}補充` : ''}`]);
+      rows.push(need.length ? ['ほか', `${counted.length - need.length}品目はMIN以上`] : ['品目', `${counted.length}品目すべてMIN以上`]);
+      if (!c.isToday) rows.push(['確認日', c.day]);
+      // 補充が要るときは見出しを赤くし、品目の数を見出しに出す（トークの一覧でも分かるように）
+      const title = `薬品在庫 ${r.place}：${need.length ? `補充${need.length}品目` : '補充なし'}`;
+      return { title, rows: rows.concat(c.tail), color: need.length ? '#b91c1c' : '' };
+    },
+    voice(f, h) {
+      // 話した品目の欄に数を入れる（手で入れた欄は変えない）。この置き場所に無い品目は要確認
+      (f.counts || []).forEach((x) => {
+        const node = $$('#zItems .z-item').find((n) => n.dataset.name === x.name);
+        if (node) h.put($('.z-count', node), x.count, x.name);
+        else h.notes.push(`品目「${x.name}」: 声では${x.count}（${value('zPlace')}の品目に無い）`);
+      });
+      h.putText($('#zMemo'), f.memo);
+      renderStockState();
+    },
+    // 次に開いたとき同じ置き場所で開く
+    remember(saved, r) {
+      saved.zaikoPlace = r.place;
+    },
+    onFarm: () => renderPlaces(),
+  },
 };
 
 // ---------- 種類ごとの欄の作り ----------
@@ -733,6 +783,111 @@ function candidateChips(input, box, key) {
   });
 }
 
+/**
+ * 薬品在庫の確認: 置き場所のボタン（2つ以上のときだけ出す）と、品目ごとの数の欄。品目は牧場を選び直したとき（onFarm）に作る。
+ * 数を入れるたびに、MIN を下回った品目を赤くし、入れた品目の数を出す。Enter で次の品目へ
+ */
+function setupZaiko() {
+  $('#zItems').addEventListener('input', (e) => { if (e.target.matches('.z-count')) renderStockState(); });
+  $('#zItems').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !e.target.matches('.z-count')) return;
+    e.preventDefault();
+    const all = $$('#zItems .z-count');
+    const next = all[all.indexOf(e.target) + 1];
+    if (next) next.focus();
+    else e.target.blur();
+  });
+}
+
+/** 今の牧場の薬品在庫の品目（「薬品在庫の品目」タブ）の置き場所。前回の置き場所で開く（端末ごと） */
+function renderPlaces() {
+  const farm = currentFarm();
+  const places = [...new Set(((farm && farm.stock) || []).map((x) => x.place))];
+  const cur = value('zPlace') || loadSaved().zaikoPlace;
+  segment($('#zPlace'), 'zPlace', places, places.includes(cur) ? cur : places[0] || '');
+  $$('#zPlace input').forEach((el) => el.addEventListener('change', renderStock));
+  $('#zPlaceCard').hidden = places.length < 2;
+  renderStock();
+}
+
+/** その置き場所の品目（設定の順） */
+function stockItems(place) {
+  const farm = currentFarm();
+  return ((farm && farm.stock) || []).filter((x) => x.place === place);
+}
+
+/** 選んでいる置き場所の品目を、区分ごとのカードに数の欄で並べる。置き場所を選び直しても、同じ品目に入れた数は残す */
+function renderStock() {
+  const box = $('#zItems');
+  const prev = Object.fromEntries($$('.z-item', box).map((n) => [n.dataset.name, $('.z-count', n).value]));
+  box.textContent = '';
+  const items = stockItems(value('zPlace'));
+  if (!items.length) {
+    const p = document.createElement('p');
+    p.className = 'errors';
+    p.textContent = '数える品目がありません。管理者が「薬品在庫の品目」タブに品目を入れると使えます';
+    box.append(p);
+  }
+  let card = null;
+  items.forEach((it, i) => {
+    if (!card || it.group !== items[i - 1].group) {
+      card = document.createElement('section');
+      card.className = 'card';
+      if (it.group) {
+        const h = document.createElement('h2');
+        h.textContent = it.group;
+        card.append(h);
+      }
+      box.append(card);
+    }
+    const tpl = $('#stockItemTpl').content.cloneNode(true);
+    const node = $('.z-item', tpl);
+    node.dataset.name = it.name;
+    $('.z-label', node).textContent = it.name;
+    $('.z-spec', node).textContent = [it.spec, it.min !== null || it.max !== null ? `MIN ${it.min !== null ? it.min : '－'}・MAX ${it.max !== null ? it.max : '－'}` : '']
+      .filter(Boolean).join('　');
+    $('.z-unit', node).textContent = it.unit;
+    const input = $('.z-count', node);
+    input.setAttribute('aria-label', `${it.name}の数`);
+    input.value = prev[it.name] || '';
+    card.append(tpl);
+  });
+  renderStockState();
+}
+
+/** 入れた数を見て、MIN を下回った品目を赤くして補充の数を出し、上に「入れた品目の数・補充が要る品目の数」を出す */
+function renderStockState() {
+  const items = stockItems(value('zPlace'));
+  let filled = 0;
+  let low = 0;
+  $$('#zItems .z-item').forEach((node) => {
+    const it = items.find((x) => x.name === node.dataset.name);
+    const v = $('.z-count', node).value.trim();
+    const x = it && /^\d+$/.test(v) ? stockJudge(it, Number(v)) : null;
+    if (x) filled++;
+    if (x && x.need) low++;
+    node.classList.toggle('low', Boolean(x && x.need));
+    $('.z-need', node).hidden = !(x && x.need);
+    $('.z-need', node).textContent = x && x.need ? `MIN ${it.min} を下回っています${x.refill !== null ? `（MAX ${it.max} まで ${x.refill}${it.unit} 補充）` : ''}` : '';
+  });
+  $('#zProgress').textContent = items.length ? `${items.length}品目のうち ${filled}品目を入れました${low ? `。補充が要るのは ${low}品目` : ''}` : '';
+}
+
+/** 1品目の判定（Apps Script の validateZaiko_ と同じ）: 在庫数が MIN を下回ったら補充が要り、補充の数は MAX まで */
+function stockJudge(it, count) {
+  const need = it.min !== null && count < it.min;
+  return { ...it, count, need, refill: need && it.max !== null ? Math.max(it.max - count, 0) : null };
+}
+
+/** 送った薬品在庫の品目ごとの判定（カード用） */
+function stockCounted(r) {
+  const items = stockItems(r.place);
+  return r.counts.map((x) => {
+    const it = items.find((y) => y.name === x.name) || { name: x.name, unit: '', min: null, max: null };
+    return stockJudge(it, Number(x.count));
+  });
+}
+
 // ---------- 種類ごとの入力チェック・カード ----------
 
 /** 分娩: 出産のときは子牛の番号・体重・時刻・分娩難易まで必須。死産・流産はわかる範囲で */
@@ -784,6 +939,19 @@ function validateChiryou(r, bad) {
 function validateSairan(r, bad) {
   checkCowRows($$('#cowList .m-cow'), bad, new Set(), '');
   if (!r.step) $$('.sStepSeg').forEach((s, i) => (i === 0 ? bad(s, '処置を選んでください') : s.classList.add('invalid')));
+}
+
+/** 薬品在庫: 置き場所の品目すべてに数（0以上の整数。無ければ0）。入っていない品目はまとめて1つのエラーにして、欄をすべて赤くする */
+function validateZaiko(r, bad) {
+  if (!stockItems(r.place).length) {
+    bad(null, '数える品目がありません（管理者が「薬品在庫の品目」タブに品目を入れると使えます）');
+    return;
+  }
+  const inputs = $$('#zItems .z-count');
+  const empty = inputs.filter((el) => el.value.trim() === '');
+  const wrong = inputs.filter((el) => el.value.trim() !== '' && !/^\d{1,5}$/.test(el.value.trim()));
+  empty.forEach((el, i) => (i === 0 ? bad(el, `数を入れてください（${empty.length}品目。無いものは0）`) : el.classList.add('invalid')));
+  wrong.forEach((el, i) => (i === 0 ? bad(el, '数は0以上の整数で入れてください') : el.classList.add('invalid')));
 }
 
 /** 体温は 35〜43℃（空ならよい） */

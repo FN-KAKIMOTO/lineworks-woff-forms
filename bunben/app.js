@@ -12,7 +12,7 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // 画面のファイルを直したら上げる。index.html の各 .js?v=… も同じ値にそろえる（古いファイルを使い回させないため。tools/check_woff.mjs で確かめる）
-const APP_VERSION = '2026-10-25a';
+const APP_VERSION = '2026-10-25b';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
@@ -32,6 +32,7 @@ const CHOOSERS = {
     ['yobou', '予防的投与', '薬・量（いつもの組み合わせ）'],
     ['hikitsugi', '引き継ぎ', 'VMS・AMR・ハーズマン（掲示板の引き継ぎの型どおりに投稿）'],
     ['bunker', 'バンカーの餌の変更', '餌の切り替え・新しい餌の詰め込み開始・使い切り'],
+    ['zaiko', '薬品在庫の確認', '週1回。品目ごとの残りの数（MIN を下回ると補充の依頼になる）'],
     ['haiyou', '死亡・廃用', '死亡・淘汰と理由'],
     ['chiryou', '治療（アブレスト以外）', 'ワクチン・繁殖治療など。薬・量・投薬区分'],
   ] },
