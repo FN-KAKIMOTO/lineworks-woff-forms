@@ -3094,7 +3094,9 @@ function setupVoice() {
   $('#voiceBtn').disabled = !state.voiceOn;
   $('#voiceOff').hidden = state.voiceOn;
   $('#voiceTextBox').hidden = !state.voiceOn;
-  $('#voiceHint').textContent = `${INFO.example}。足りないところ・誤っているところは、あとで手で直せます。先に手で入れた項目は変えません`;
+  // 声の聞き取りを直すため、期間限定で「要確認」が出た声の文字を残している間は、そのことを案内する（残さないときは何も足さない）
+  const logNote = state.voiceLogUntil ? `。聞き取りを良くするため、「要確認」が出たときだけ、話した内容の文字を${state.voiceLogUntil}まで記録します` : '';
+  $('#voiceHint').textContent = `${INFO.example}。足りないところ・誤っているところは、あとで手で直せます。先に手で入れた項目は変えません${logNote}`;
   $('#voiceHint').hidden = !state.voiceOn;
   if (!state.voiceOn) return;
   $('#voiceBtn').addEventListener('click', toggleRecording);
@@ -3489,7 +3491,7 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // 画面のファイルを直したら上げる。index.html の各 .js?v=… も同じ値にそろえる（古いファイルを使い回させないため。tools/check_woff.mjs で確かめる）
-const APP_VERSION = '2026-10-28b';
+const APP_VERSION = '2026-10-28c';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
@@ -3549,6 +3551,7 @@ const state = {
   herdUnknown: 'わからない',
   lastPost: null, // 引き継ぎ: 保存したときに Apps Script が作った掲示板の件名と本文
   voiceOn: false, // Apps Script に OpenAI の API キーがあるか（無ければ「まとめて話す」は出さない）
+  voiceLogUntil: null, // 声の誤認識を集めるため、要確認が出た声の文字を残している最終日（yyyy-MM-dd。残していなければ null）
   boards: [], // 書き込める掲示板（投稿先の候補）
   boardsLoaded: false, // 掲示板の一覧を読み終えたか（引き継ぎの投稿先の案内に使う）
   txBlock: null, // 一緒に入れる投薬の欄
@@ -3669,6 +3672,7 @@ function applyConfig(res) {
   state.handover = res.handover || [];
   state.herdUnknown = res.herdUnknown || 'わからない';
   state.voiceOn = Boolean(res.voice);
+  state.voiceLogUntil = res.voiceLogUntil || null;
   state.presets = res.presets || [];
   state.channel = res.channel || null;
   state.destinations = res.destinations || [];
@@ -3781,7 +3785,7 @@ function showFatal(msg) {
 const CONFIG_STORE = MOCK ? 'fdp-config-mock' : 'fdp-config';
 // 端末に残した設定を使えるかの印。画面の版（APP_VERSION）とは別にして、画面を直すたびに「初めての端末」と同じ待ちにならないようにする。
 // 画面が読む設定の形（config の返事の項目）を変えたときだけ上げる。古い設定で出ても、裏で読んだ新しい設定が違えば「設定が新しくなりました」と出る
-const CONFIG_SCHEMA = '1';
+const CONFIG_SCHEMA = '2'; // 2: 声の記録の最終日（voiceLogUntil）を足した（古い設定のままだと声の欄に記録の案内が出ないため）
 // 投稿先（開いたトークの名前・ほかのトーク）はトークごと。それ以外の設定は人ごと
 const CHANNEL_KEYS = ['channel', 'destinations'];
 
