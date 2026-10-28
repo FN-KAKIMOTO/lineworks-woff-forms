@@ -2586,11 +2586,16 @@ function cowsLabel(cows) {
 
 // ---------- フォーム ----------
 
-function setupForm() {
+/** 上の「○○ さん｜投稿のされ方」。開いたトークが分かったとき（遅れることがある）にも呼ぶ */
+function showWho() {
   const name = (state.user && state.user.name) || state.profile.displayName;
   $('#who').textContent = TRIAL
     ? '試行モード｜スプレッドシートに保存します。トークへは送信後に出る文面をコピーして貼ってください'
     : `${name} さん｜${state.canPost ? '送信するとトークにも投稿されます' : 'この画面からはトークに投稿されません（シートには保存されます）'}`;
+}
+
+function setupForm() {
+  showWho();
   $('#copyMessage').addEventListener('click', () => copyText($('#doneMessage').textContent));
 
   const saved = loadSaved();
@@ -3484,7 +3489,7 @@ const CONFIG = {
 
 // 画面の版。送信のたびに Apps Script へ渡し、実行ログに残る（スマホが古い画面を使っていないかを見る）。
 // 画面のファイルを直したら上げる。index.html の各 .js?v=… も同じ値にそろえる（古いファイルを使い回させないため。tools/check_woff.mjs で確かめる）
-const APP_VERSION = '2026-10-28a';
+const APP_VERSION = '2026-10-28b';
 
 const PARAMS = new URLSearchParams(location.search);
 const MOCK = PARAMS.has('mock');
@@ -3578,6 +3583,7 @@ function perf(label) {
 }
 
 async function start() {
+  let channelWait = null; // 開いたトークの取得（試行モードでは無い）
   perf('画面の準備');
   if (MOCK) await loadScript(`mock.js?v=${APP_VERSION}`);
   if (TRIAL) {
@@ -3591,23 +3597,24 @@ async function start() {
       woff.login();
       return;
     }
-    // 本人確認とトークの取得は互いに待たなくてよいので同時に走らせる（スマホの電波が悪いと1往復ずつが効く）
+    // トークの取得（スマホでは LINE WORKS アプリへの問い合わせで、遅いことがある）は本人確認と同時に始め、前回の設定でフォームを出せるときは待たない
     state.token = woff.getAccessToken();
-    [state.profile, state.channelId] = await Promise.all([woff.getProfile(), currentChannelId()]);
-    state.canPost = Boolean(state.channelId);
+    channelWait = currentChannelId();
+    state.profile = await woff.getProfile();
     perf('本人確認');
   }
   // 設定は前回この端末で読んだものを使ってすぐにフォームを出し、新しい設定は裏で読む（Apps Script の返事は1.5〜8秒かかる）。
-  // 新しい設定は次に開いたときから使い、変わっていたらフォームの上で知らせる。初めての端末・試行モード・管理画面は待って読む
+  // 新しい設定は次に開いたときから使い、変わっていたらフォームの上で知らせる。初めての端末・試行モード・管理画面は待って読む。
+  // 開いたトークが分かるのは少し遅れることがあるので、前回の設定で出すときはトークが分かってから投稿先だけ直す（それまでは「投稿しない」）
   const cached = TRIAL || PARAMS.get('admin') ? null : readConfigCache();
-  const fresh = api('config', { channelId: state.channelId });
   let res;
   if (cached) {
     res = cached;
-    fresh.then(onFreshConfig, onFreshConfigError);
+    channelWait.then(onChannelKnown);
   } else {
+    if (channelWait) onChannelKnown(await channelWait, false);
     try {
-      res = await fresh;
+      res = await api('config', { channelId: state.channelId });
     } catch (e) {
       if (TRIAL) writeStore(TRIAL_KEY_STORE, ''); // キーが違うときは次に開いたとき聞き直す
       throw e;
@@ -3625,6 +3632,23 @@ async function start() {
     return;
   }
   openForm();
+}
+
+/**
+ * 開いたトークが分かったとき。待って読む場合（late=false）は state に入れるだけ。
+ * 前回の設定で先にフォームを出していた場合（late）は、投稿先の表示を直し、新しい設定を裏で読み始める
+ */
+function onChannelKnown(channelId, late = true) {
+  state.channelId = channelId;
+  state.canPost = Boolean(channelId);
+  perf('トークの取得');
+  if (!late) return;
+  if (state.view === 'form' && !PICKING) {
+    if ($('#dest').value === COPY) $('#dest').value = ''; // 「投稿しない」は仮の既定なので、トークが分かったら「このトーク」に戻す
+    showWho();
+    setupDest();
+  }
+  api('config', { channelId }).then(onFreshConfig, onFreshConfigError);
 }
 
 /** Apps Script の設定（config の返事）を state に入れる */
@@ -3755,14 +3779,17 @@ function showFatal(msg) {
 // ---------- 端末に残す設定（すぐにフォームを出すため） ----------
 
 const CONFIG_STORE = MOCK ? 'fdp-config-mock' : 'fdp-config';
+// 端末に残した設定を使えるかの印。画面の版（APP_VERSION）とは別にして、画面を直すたびに「初めての端末」と同じ待ちにならないようにする。
+// 画面が読む設定の形（config の返事の項目）を変えたときだけ上げる。古い設定で出ても、裏で読んだ新しい設定が違えば「設定が新しくなりました」と出る
+const CONFIG_SCHEMA = '1';
 // 投稿先（開いたトークの名前・ほかのトーク）はトークごと。それ以外の設定は人ごと
 const CHANNEL_KEYS = ['channel', 'destinations'];
 
-/** 前回この端末で読んだ設定。同じ人・同じ画面の版のときだけ使う（画面を直した版では読み直す） */
+/** 前回この端末で読んだ設定。同じ人・同じ設定の形のときだけ使う */
 function readConfigCache() {
   try {
     const c = JSON.parse(localStorage.getItem(CONFIG_STORE) || 'null');
-    if (!c || c.appVersion !== APP_VERSION || c.userId !== state.profile.userId || !c.res || !(c.res.farms || []).length) return null;
+    if (!c || c.schema !== CONFIG_SCHEMA || c.userId !== state.profile.userId || !c.res || !(c.res.farms || []).length) return null;
     const ch = (c.channels || {})[state.channelId || ''] || {
       channel: state.channelId ? { channelId: state.channelId, name: '' } : null, destinations: [],
     };
@@ -3775,12 +3802,12 @@ function readConfigCache() {
 function saveConfigCache(res) {
   try {
     const prev = JSON.parse(localStorage.getItem(CONFIG_STORE) || 'null');
-    const same = prev && prev.appVersion === APP_VERSION && prev.userId === state.profile.userId;
+    const same = prev && prev.schema === CONFIG_SCHEMA && prev.userId === state.profile.userId;
     const rest = Object.assign({}, res);
     CHANNEL_KEYS.forEach((k) => delete rest[k]);
     delete rest.ok;
     const channels = Object.assign({}, same ? prev.channels : {}, { [state.channelId || '']: { channel: res.channel || null, destinations: res.destinations || [] } });
-    localStorage.setItem(CONFIG_STORE, JSON.stringify({ appVersion: APP_VERSION, userId: state.profile.userId, savedAt: Date.now(), res: rest, channels }));
+    localStorage.setItem(CONFIG_STORE, JSON.stringify({ schema: CONFIG_SCHEMA, userId: state.profile.userId, savedAt: Date.now(), res: rest, channels }));
   } catch (_) {
     // 残せなくても次に開いたときに待って読むだけ
   }
